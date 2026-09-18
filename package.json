@@ -1,0 +1,57 @@
+{
+  "name": "@kirizu/kirivers-client",
+  "version": "0.1.0",
+  "description": "Official KiriVers native JSON client SDK for Node.js 20+ and Electron app-level code. Browsers are not supported.",
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist/src",
+    "openapi.client.json",
+    "OPENAPI_REVISION",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "tsc",
+    "test": "tsc && node --test dist/test/adapters.test.js dist/test/contract.test.js dist/test/integration.test.js dist/test/pathutil.test.js dist/test/signature.test.js dist/test/updater.test.js"
+  },
+  "keywords": [
+    "kirivers",
+    "update",
+    "client",
+    "sdk"
+  ],
+  "author": "Kirizu-Official",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kirizu-Official/KiriVers.git",
+    "directory": "."
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "yauzl": "^2.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/yauzl": "^2.10.3",
+    "typescript": "^5.6.0"
+  }
+}
