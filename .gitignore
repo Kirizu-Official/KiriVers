@@ -1,0 +1,9 @@
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+doc/api/
+*.iml
+.idea/
+.vscode/

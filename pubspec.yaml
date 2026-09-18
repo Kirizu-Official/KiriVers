@@ -1,0 +1,26 @@
+name: kirivers_client
+description: >
+  Official KiriVers native JSON client SDK for Dart 3 (Dart VM and Flutter
+  apps). Handwritten against the client-plane OpenAPI snapshot. Browser /
+  dart:html is not supported.
+version: 0.1.0
+repository: https://github.com/Kirizu-Official/KiriVers
+issue_tracker: https://github.com/Kirizu-Official/KiriVers/issues
+topics:
+  - kirivers
+  - updater
+  - client
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  archive: ^4.0.0
+  crypto: ^3.0.0
+  cryptography: ^2.7.0
+  http: ^1.2.0
+  unorm_dart: ^0.3.0
+
+dev_dependencies:
+  lints: ^4.0.0
+  test: ^1.25.0
