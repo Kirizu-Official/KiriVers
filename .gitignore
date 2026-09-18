@@ -1,0 +1,11 @@
+/build/
+/out/
+/cmake-build-*/
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+.idea/
+.vscode/
+*.user
+.DS_Store
+Thumbs.db

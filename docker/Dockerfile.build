@@ -1,0 +1,20 @@
+# One-off SDK *build* image
+#
+# Not a runtime, not a publish dependency, not part of the C++ package
+# consumers link. Use only when the host has no CMake / libcurl toolchain.
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    cmake \
+    g++ \
+    make \
+    pkg-config \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    libzip-dev \
+    libutf8proc-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
