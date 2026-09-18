@@ -1,0 +1,17 @@
+/build/
+/cmake-build-*/
+/.idea/
+/.vs/
+/CMakeUserPresets.json
+*.obj
+*.o
+*.a
+*.lib
+*.dll
+*.so
+*.dylib
+*.exe
+*.pdb
+*.user
+.DS_Store
+sdk-fixture.json
