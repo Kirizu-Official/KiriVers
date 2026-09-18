@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/Kirizu.KiriVers.Client.Tests.csproj" />
+  </Folder>
+  <Project Path="Kirizu.KiriVers.Client.csproj" />
+</Solution>

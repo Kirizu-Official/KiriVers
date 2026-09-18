@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Kirizu.KiriVers.Client</RootNamespace>
+    <AssemblyName>Kirizu.KiriVers.Client</AssemblyName>
+    <PackageId>Kirizu.KiriVers.Client</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Kirizu</Authors>
+    <Company>Kirizu</Company>
+    <Description>Official KiriVers native JSON client SDK for .NET 8. Check, download, verify, and optionally apply updates against the client plane.</Description>
+    <PackageTags>kirivers;update;client</PackageTags>
+    <RepositoryUrl>https://github.com/Kirizu-Official/KiriVers</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <IsPackable>true</IsPackable>
+    <NoWarn>$(NoWarn);CA5351;SYSLIB0021</NoWarn>
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests/**</DefaultItemExcludes>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+    <None Include="openapi.client.json" Pack="true" PackagePath="content\openapi.client.json" />
+    <None Include="OPENAPI_REVISION" Pack="true" PackagePath="content\OPENAPI_REVISION" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Kirizu.KiriVers.Client.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>
