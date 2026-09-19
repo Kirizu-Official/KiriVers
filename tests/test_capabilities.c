@@ -98,6 +98,37 @@ int main(void) {
     EXPECT_STREQ(caps.accepted_delta_algos[0], "bsdiff");
     EXPECT_STREQ(caps.accepted_delta_algos[1], "xdelta3");
     kirivers_capability_set_free(&caps);
+
+#ifdef KIRIVERS_HOSTED
+    /* Hosted defaults: zip + stdio FileStore justify patch_package/file_list; never binary_delta. */
+    {
+        KiriversAdapters ha;
+        int hosted_full = 0, hosted_patch = 0, hosted_files = 0, hosted_delta = 0;
+        memset(&ha, 0, sizeof(ha));
+        EXPECT(kirivers_hosted_adapters_init(&ha, ".", &err) == KIRIVERS_OK);
+        EXPECT(kirivers_derive_capabilities(&ha, &caps, &err) == KIRIVERS_OK);
+        for (i = 0; i < caps.n_capabilities; i++) {
+            if (strcmp(caps.capabilities[i], "full_package") == 0) {
+                hosted_full = 1;
+            }
+            if (strcmp(caps.capabilities[i], "patch_package") == 0) {
+                hosted_patch = 1;
+            }
+            if (strcmp(caps.capabilities[i], "file_list") == 0) {
+                hosted_files = 1;
+            }
+            if (strcmp(caps.capabilities[i], "binary_delta") == 0) {
+                hosted_delta = 1;
+            }
+        }
+        EXPECT(hosted_full && hosted_patch && hosted_files);
+        EXPECT(!hosted_delta);
+        EXPECT(caps.n_algos == 0);
+        kirivers_capability_set_free(&caps);
+        kirivers_hosted_adapters_deinit(&ha);
+    }
+#endif
+
     printf("test_capabilities ok\n");
     return 0;
 }

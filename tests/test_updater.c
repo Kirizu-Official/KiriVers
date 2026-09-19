@@ -3,6 +3,8 @@
 #include "test.h"
 #include "cJSON.h"
 
+#include <string.h>
+
 static int algos(void *ctx, const char *const **out, size_t *n) {
     static const char *a[] = {"bsdiff"};
     (void)ctx;
@@ -96,6 +98,10 @@ int main(void) {
         EXPECT_STREQ(cJSON_GetArrayItem(alg, 0)->valuestring, "bsdiff");
         cJSON_Delete(body);
     }
+
+    EXPECT(res.len == 3);
+    EXPECT(res.data != NULL && memcmp(res.data, "abc", 3) == 0);
+    EXPECT(kirivers_mock_leftover(&mock) == 0);
 
     kirivers_update_result_free(&res);
     kirivers_updater_free(u);

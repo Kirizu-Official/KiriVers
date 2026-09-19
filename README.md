@@ -8,6 +8,17 @@ git clone -b sdk/c https://github.com/Kirizu-Official/KiriVers.git kirivers-clie
 
 There is no language-specific package registry for C. The package root **is** the branch root. CMake is the build system. **Docker is not an SDK runtime or publish dependency.**
 
+## Platforms
+
+| Runtime | CMake preset | Notes |
+|---------|--------------|--------|
+| Windows, macOS, Linux desktop/server | `hosted` (default) | Links libcurl, OpenSSL, libzip, utf8proc |
+| MCU / RTOS / other embedded | `embedded` | cJSON only; inject `Transport` and any other adapters |
+| Android / HarmonyOS NDK | either | No default APK installer (`Replacer` is yours) |
+| iOS | not a target | Use the Swift SDK for App Store / MDM install |
+
+Presets do not pin a generator: CMake uses its platform default (`MinGW Makefiles` if that is what `cmake -G` lists on Windows). Override with `-G Ninja` or `-G "MinGW Makefiles"` as needed. Hosted system packages (Debian/Ubuntu names): `libcurl4-openssl-dev`, `libssl-dev`, `libzip-dev`, `libutf8proc-dev`, plus `cmake`, `pkg-config`, and a C11 compiler. Windows: MSYS2/MinGW or vcpkg equivalents of those libraries.
+
 OpenAPI snapshot: `openapi.client.json` (`OPENAPI_REVISION` = `1.0.0 B443DEA6`). The client is handwritten; do not run OpenAPI Generator.
 
 ## CMake presets
@@ -28,9 +39,7 @@ cmake --build --preset hosted
 ctest --preset hosted
 ```
 
-Hosted requires system packages (Debian/Ubuntu names): `libcurl4-openssl-dev`, `libssl-dev`, `libzip-dev`, `libutf8proc-dev`, plus `cmake`, `ninja-build`, `pkg-config`.
-
-Embedded links **only** cJSON. You must inject `Transport` (and any other adapters you need). `KIRIVERS_EMBEDDED=ON` does **not** compile or link curl, OpenSSL, libzip, or utf8proc.
+Hosted requires the D18 system libraries listed above. Embedded links **only** cJSON. You must inject `Transport` (and any other adapters you need). `KIRIVERS_EMBEDDED=ON` does **not** compile or link curl, OpenSSL, libzip, or utf8proc.
 
 JSON is not an injectable adapter (D16). Do not add json-c or a second HTTP stack.
 
@@ -119,7 +128,7 @@ Errors use `{ "error": { "code", "message", "details" } }`. HTTP 204 on check is
 
 ## Tests
 
-Contract tests use a fake `Transport` (no Docker, no listening server). Integration against a live client plane:
+Contract tests use a fake `Transport` (no Docker, no listening server). Integration against a live client plane is skipped when `sdk-fixture.json` is absent (`KIRIVERS_SKIP_INTEGRATION=1` also skips):
 
 ```sh
 cmake --preset hosted && cmake --build --preset hosted

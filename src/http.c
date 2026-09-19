@@ -9,7 +9,7 @@ int kirivers_http(KiriversClient *c, const char *method, const char *url, const 
     KiriversHttpHeader headers[8];
     size_t n = 0;
     KiriversHttpRequest req;
-    char auth[160];
+    char *auth = NULL;
     int rc;
 
     memset(out, 0, sizeof(*out));
@@ -29,12 +29,13 @@ int kirivers_http(KiriversClient *c, const char *method, const char *url, const 
         n++;
     }
     if (c->project_token && c->project_token[0]) {
-        size_t max = sizeof(auth);
-        if (strlen(c->project_token) + 8 >= max) {
-            return kirivers_error_set(err, 0, "INVALID_ARGUMENT", "project_token too long", NULL);
+        size_t tlen = strlen(c->project_token);
+        auth = (char *)malloc(tlen + 8);
+        if (!auth) {
+            return kirivers_error_set(err, 0, "INTERNAL_ERROR", "oom", NULL);
         }
         memcpy(auth, "Bearer ", 7);
-        memcpy(auth + 7, c->project_token, strlen(c->project_token) + 1);
+        memcpy(auth + 7, c->project_token, tlen + 1);
         headers[n].name = "Authorization";
         headers[n].value = auth;
         n++;
@@ -69,6 +70,7 @@ int kirivers_http(KiriversClient *c, const char *method, const char *url, const 
     }
 
     rc = c->transport.request(c->transport.ctx, &req, out, err);
+    free(auth);
     if (rc != KIRIVERS_OK) {
         if (err && !err->code) {
             kirivers_error_set(err, 0, "TRANSPORT", "transport request failed", NULL);

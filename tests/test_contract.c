@@ -77,6 +77,8 @@ int main(void) {
     memset(&cfg, 0, sizeof(cfg));
     cfg.base_url = "http://127.0.0.1:8080";
     cfg.project_ref = "sdk-fixture";
+    cfg.project_token = "tok-project";
+    cfg.channel_token = "tok-channel";
     cfg.transport = tr;
     memset(&err, 0, sizeof(err));
     c = kirivers_client_new(&cfg, &err);
@@ -299,6 +301,79 @@ int main(void) {
         cJSON_Delete(body);
     }
 
+    /* Required fields on other native POST bodies (OpenAPI required[]). */
+    {
+        cJSON *report = NULL, *diff = NULL, *pack = NULL, *tel = NULL;
+        size_t k;
+        for (k = 0; k < mock.ncalls; k++) {
+            if (strcmp(mock.calls[k].method, "POST") == 0 &&
+                strstr(mock.calls[k].url, "/clients/report")) {
+                report = cJSON_Parse(mock.calls[k].body);
+            }
+            if (strcmp(mock.calls[k].method, "POST") == 0 && strstr(mock.calls[k].url, "/update/diff")) {
+                diff = cJSON_Parse(mock.calls[k].body);
+            }
+            if (strcmp(mock.calls[k].method, "POST") == 0 && strstr(mock.calls[k].url, "/update/pack")) {
+                pack = cJSON_Parse(mock.calls[k].body);
+            }
+            if (strcmp(mock.calls[k].method, "POST") == 0 &&
+                strstr(mock.calls[k].url, "/telemetry/report")) {
+                tel = cJSON_Parse(mock.calls[k].body);
+            }
+        }
+        EXPECT(report != NULL);
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(report, "device_id")));
+        EXPECT(diff != NULL);
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(diff, "source_version")));
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(diff, "target_version")));
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(diff, "os")));
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(diff, "arch")));
+        EXPECT(pack != NULL);
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(pack, "source_version")));
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(pack, "target_version")));
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(pack, "os")));
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(pack, "arch")));
+        EXPECT(tel != NULL);
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(tel, "os")));
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(tel, "arch")));
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(tel, "channel")));
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(tel, "from_version")));
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(tel, "to_version")));
+        EXPECT(cJSON_IsString(cJSON_GetObjectItemCaseSensitive(tel, "status")));
+        cJSON_Delete(report);
+        cJSON_Delete(diff);
+        cJSON_Delete(pack);
+        cJSON_Delete(tel);
+    }
+
+    /* Integrity required query os/arch. Auth headers on every call. */
+    {
+        int saw_integ = 0, saw_auth = 0, saw_channel = 0;
+        size_t k;
+        for (k = 0; k < mock.ncalls; k++) {
+            if (strstr(mock.calls[k].headers, "Authorization:Bearer tok-project") ||
+                strstr(mock.calls[k].headers, "Authorization: Bearer tok-project")) {
+                saw_auth = 1;
+            }
+            if (strstr(mock.calls[k].headers, "X-Project-Token:tok-project") ||
+                strstr(mock.calls[k].headers, "X-Project-Token: tok-project")) {
+                saw_auth = 1;
+            }
+            if (strstr(mock.calls[k].headers, "X-Channel-Token:tok-channel") ||
+                strstr(mock.calls[k].headers, "X-Channel-Token: tok-channel")) {
+                saw_channel = 1;
+            }
+            if (strcmp(mock.calls[k].method, "GET") == 0 &&
+                strstr(mock.calls[k].url, "/versions/1.1.0/integrity") &&
+                strstr(mock.calls[k].url, "os=windows") && strstr(mock.calls[k].url, "arch=x86_64")) {
+                saw_integ = 1;
+            }
+        }
+        EXPECT(saw_integ);
+        EXPECT(saw_auth);
+        EXPECT(saw_channel);
+    }
+
     /* Private download keeps exp/sig query and Range. */
     {
         int saw_query = 0, saw_range = 0;
@@ -347,6 +422,35 @@ int main(void) {
     EXPECT(openapi_has_path(paths, "/api/v1/projects/{project_ref}/announcements"));
     EXPECT(openapi_has_path(paths, "/api/v1/projects/{project_ref}/telemetry/report"));
     EXPECT(openapi_has_path(paths, "/api/v1/projects/{project_ref}/media/{id}"));
+    /* Snapshot drift: every non-store, non-openapi path must be a known SDK operation. */
+    {
+        cJSON *path = NULL;
+        cJSON_ArrayForEach(path, paths) {
+            const char *pname = path->string;
+            int known = 0;
+            if (!pname) {
+                continue;
+            }
+            if (strstr(pname, "/store/") || strstr(pname, "/openapi.json")) {
+                continue;
+            }
+            if (strcmp(pname, "/api/v1/health") == 0 ||
+                strcmp(pname, "/api/v1/projects/{project_ref}") == 0 ||
+                strstr(pname, "/clients/report") || strstr(pname, "/update/check") ||
+                strstr(pname, "/changelog/") || strstr(pname, "/integrity") ||
+                strstr(pname, "/update/diff") || strstr(pname, "/update/pack") ||
+                strstr(pname, "/packages/") || strstr(pname, "/channels") ||
+                strstr(pname, "/matrix") || strstr(pname, "/languages") ||
+                strstr(pname, "/announcements") || strstr(pname, "/telemetry/report") ||
+                strstr(pname, "/media/")) {
+                known = 1;
+            }
+            if (!known) {
+                fprintf(stderr, "unexpected OpenAPI path %s\n", pname);
+            }
+            EXPECT(known);
+        }
+    }
     /* Leftover paths must not be implemented; they may still exist as store docs. */
     {
         cJSON *check = cJSON_GetObjectItemCaseSensitive(

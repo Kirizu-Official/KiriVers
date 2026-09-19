@@ -6,6 +6,9 @@
 #include "kirivers/error.h"
 #include "kirivers/types.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -42,6 +45,8 @@ typedef struct KiriversUpdateRequest {
 typedef struct KiriversUpdateResult {
     int outcome;
     char *staged_path;
+    uint8_t *data; /**< Verified bytes when FileStore is unset; otherwise NULL. */
+    size_t len;
     char *sha256;
     char *version_semver;
     char *diff_mode;
@@ -54,6 +59,7 @@ void kirivers_updater_free(KiriversUpdater *u);
 /**
  * Check → download/diff/pack → hash verify → optional patch/unpack → optional replace.
  * Missing Replacer is not a failure: verified bytes stay at stage_path.
+ * Missing FileStore is not a failure: verified bytes are returned in data/len.
  * Telemetry errors never fail the result.
  */
 int kirivers_update(KiriversUpdater *u, const KiriversUpdateRequest *req, KiriversUpdateResult *out,

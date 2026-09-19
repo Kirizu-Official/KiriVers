@@ -9,7 +9,6 @@
     {
       "name": "hosted",
       "displayName": "Hosted (libcurl, OpenSSL, libzip, utf8proc)",
-      "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/hosted",
       "cacheVariables": {
         "KIRIVERS_EMBEDDED": "OFF",
@@ -19,7 +18,6 @@
     {
       "name": "embedded",
       "displayName": "Embedded (cJSON + function pointers)",
-      "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/embedded",
       "cacheVariables": {
         "KIRIVERS_EMBEDDED": "ON",

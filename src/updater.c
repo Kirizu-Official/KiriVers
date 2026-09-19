@@ -41,6 +41,7 @@ void kirivers_update_result_free(KiriversUpdateResult *v) {
         return;
     }
     free(v->staged_path);
+    free(v->data);
     free(v->sha256);
     free(v->version_semver);
     free(v->diff_mode);
@@ -509,6 +510,10 @@ int kirivers_update(KiriversUpdater *u, const KiriversUpdateRequest *req, Kirive
         if (err && err->code && strcmp(err->code, "NO_FILESTORE") == 0) {
             kirivers_error_clear(err);
             out->outcome = KIRIVERS_UPDATE_STAGED;
+            out->data = blob.data;
+            out->len = blob.len;
+            blob.data = NULL;
+            blob.len = 0;
             out->sha256 = out->check.sha256 ? kirivers_strdup(out->check.sha256) : NULL;
             out->version_semver =
                 out->check.version_semver ? kirivers_strdup(out->check.version_semver) : NULL;
