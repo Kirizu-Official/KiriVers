@@ -63,6 +63,13 @@ function isIntegrityBody(
   return res.status === 200 && res.body !== undefined;
 }
 
+/** Prefer SemVer, then integer compare-engine ref (never the source version by accident). */
+function targetVersionRef(target: UpdateCheck200, fallback = ""): string {
+  if (target.version_semver) return target.version_semver;
+  if (target.version_integer != null) return String(target.version_integer);
+  return fallback;
+}
+
 /**
  * High-level check → download → verify → optional patch/unpack → optional replace.
  * Missing Replacer returns the staged verified path. Telemetry errors never fail the update.
@@ -241,9 +248,11 @@ export class Updater {
     const localBytes = await this.fileStore.read(localPath);
     const localSha = this.hasher.sha256(localBytes);
     const caps = this.capabilities();
+    const targetVersion = targetVersionRef(target);
+    if (!targetVersion) throw new Error("missing target version");
     const diff = await this.client.diff({
       source_version: this.currentVersion,
-      target_version: target.version_semver ?? this.currentVersion,
+      target_version: targetVersion,
       os: this.os,
       arch: this.arch,
       channel: this.channel ?? target.target_channel,
@@ -283,7 +292,9 @@ export class Updater {
     packageUrl?: string;
   }> {
     if (!this.fileStore || !this.installDir) throw new Error("installDir required");
-    const integ = await this.client.integrity(target.version_semver ?? this.currentVersion, {
+    const targetVersion = targetVersionRef(target);
+    if (!targetVersion) throw new Error("missing target version");
+    const integ = await this.client.integrity(targetVersion, {
       os: this.os,
       arch: this.arch,
       channel: this.channel ?? target.target_channel,
@@ -294,7 +305,7 @@ export class Updater {
     const pack = await this.client.packUntilReady(
       {
         source_version: this.currentVersion,
-        target_version: target.version_semver ?? this.currentVersion,
+        target_version: targetVersion,
         os: this.os,
         arch: this.arch,
         channel: this.channel ?? target.target_channel,
@@ -389,7 +400,7 @@ export class Updater {
         arch: this.arch,
         channel: this.channel ?? target.target_channel,
         from_version: this.currentVersion,
-        to_version: target.version_semver ?? "",
+        to_version: targetVersionRef(target, this.currentVersion),
         status,
         device_id: this.deviceId,
         diff_mode: mode,

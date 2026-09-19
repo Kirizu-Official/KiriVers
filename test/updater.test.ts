@@ -239,4 +239,102 @@ describe("Updater", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("default Updater advertises patch_package (yauzl) and not binary_delta", () => {
+    const transport = new MockTransport(() => jsonResponse(204, ""));
+    const client = new Client({ baseUrl: "http://example.invalid", projectRef: "p", transport });
+    const updater = new Updater({
+      client,
+      os: "windows",
+      arch: "x86_64",
+      currentVersion: "1.0.0",
+      replacer: null,
+    });
+    const caps = updater.capabilities();
+    assert.ok(caps.capabilities.includes("full_package"));
+    assert.ok(caps.capabilities.includes("patch_package"));
+    assert.ok(caps.capabilities.includes("file_list"));
+    assert.equal(caps.capabilities.includes("binary_delta"), false);
+    assert.equal(caps.accepted_delta_algos, undefined);
+  });
+
+  it("integer-engine target uses version_integer for integrity, pack, and telemetry", async () => {
+    const payload = Buffer.from("full");
+    const sha = new NodeHasher().sha256(payload);
+    const body = {
+      has_update: true,
+      is_mandatory: false,
+      is_downgrade: false,
+      reason: "normal",
+      compare_engine: "integer" as const,
+      version_integer: 2,
+      version_semver: null,
+      target_channel: "stable",
+      target_hw_rev: null,
+      package_type: "multi_file" as const,
+      root_hash: "",
+      package_url: "/api/v1/projects/p/packages/aa",
+      file_name: "app.zip",
+      size: payload.length,
+      sha256: sha,
+      delta_available: false,
+    };
+    const transport = new MockTransport((req) => {
+      const p = pathnameOf(req);
+      if (p.endsWith("/update/check")) return jsonResponse(200, body);
+      if (p.includes("/integrity")) {
+        assert.ok(p.includes("/versions/2/integrity"), p);
+        return jsonResponse(200, {
+          version_integer: 2,
+          version_semver: null,
+          channel: "stable",
+          package_type: "multi_file",
+          root_hash: "",
+          full_package_url: body.package_url,
+          file_name: "app.zip",
+          size: payload.length,
+          sha256: sha,
+          files: [
+            {
+              path: "app.bin",
+              size: 1,
+              install_policy: "OVERWRITE",
+              integrity_check: true,
+              sha256: "ab",
+            },
+          ],
+        });
+      }
+      if (p.endsWith("/update/pack")) {
+        const packBody = JSON.parse(new TextDecoder().decode(req.body!)) as { target_version: string };
+        assert.equal(packBody.target_version, "2");
+        return jsonResponse(200, { status: "full_package" });
+      }
+      if (p.includes("/packages/")) return bytesResponse(200, payload);
+      if (p.endsWith("/telemetry/report")) return jsonResponse(202, { status: "ok" });
+      return jsonResponse(404, { error: { code: "NOT_FOUND", message: "no" } });
+    });
+    const dir = await mkdtemp(path.join(os.tmpdir(), "kv-int-"));
+    try {
+      const client = new Client({ baseUrl: "http://example.invalid", projectRef: "p", transport });
+      const updater = new Updater({
+        client,
+        os: "windows",
+        arch: "x86_64",
+        currentVersion: "1",
+        installDir: path.join(dir, "install"),
+        stageDir: path.join(dir, "stage"),
+        unpacker: null,
+        replacer: null,
+      });
+      const out = await updater.run();
+      assert.equal(out.kind, "updated");
+      const tels = transport.requests
+        .filter((r) => pathnameOf(r).endsWith("/telemetry/report"))
+        .map((r) => JSON.parse(new TextDecoder().decode(r.body!)) as { status: string; to_version: string });
+      assert.ok(tels.some((t) => t.to_version === "2"));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

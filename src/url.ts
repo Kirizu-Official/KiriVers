@@ -16,6 +16,36 @@ export function withQuery(url: string, query: Record<string, string | boolean | 
   return u.toString();
 }
 
+/** True when `url` is the client-plane origin (tokens must not go to a public S3/CDN host). */
+export function sameOrigin(baseUrl: string, url: string): boolean {
+  try {
+    const a = new URL(baseUrl);
+    const b = new URL(url);
+    return a.protocol === b.protocol && a.host === b.host;
+  } catch {
+    return false;
+  }
+}
+
+export function headerGet(headers: Record<string, string>, name: string): string | undefined {
+  const want = name.toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(headers, want) && headers[want] !== undefined) {
+    return headers[want];
+  }
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === want) return v;
+  }
+  return undefined;
+}
+
+export function lowerHeaderRecord(headers: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(headers)) {
+    out[k.toLowerCase()] = v;
+  }
+  return out;
+}
+
 export function headerMap(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {};
   headers.forEach((value, key) => {
@@ -25,5 +55,5 @@ export function headerMap(headers: Headers): Record<string, string> {
 }
 
 export function etagOf(headers: Record<string, string>): string | undefined {
-  return headers.etag;
+  return headerGet(headers, "etag");
 }

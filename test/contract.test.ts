@@ -8,11 +8,13 @@ import { Client } from "../src/client.js";
 import { ApiError } from "../src/errors.js";
 import { LEFTOVER_PATHS } from "../src/paths.js";
 import { bytesResponse, jsonResponse, MockTransport, pathnameOf } from "./helpers.js";
+import type { TransportRequest } from "../src/transport.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const spec = JSON.parse(readFileSync(path.join(root, "openapi.client.json"), "utf8")) as {
   info: { version: string };
   paths: Record<string, Record<string, unknown>>;
+  components: { schemas: Record<string, { required?: string[]; properties?: Record<string, unknown> }> };
 };
 
 const SKIP_PATH_SUBSTR = ["/store/", "/openapi.json"];
@@ -91,10 +93,12 @@ describe("OpenAPI contract (mock Transport)", () => {
 
   it("package.json dependencies are only yauzl and there is no browser export", () => {
     const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
+      name?: string;
       dependencies: Record<string, string>;
       exports?: unknown;
       browser?: unknown;
     };
+    assert.equal(pkg.name, "@kirizu/kirivers-client");
     assert.deepEqual(Object.keys(pkg.dependencies), ["yauzl"]);
     assert.equal(pkg.browser, undefined);
     const exports = JSON.stringify(pkg.exports ?? {});
@@ -312,4 +316,152 @@ describe("OpenAPI contract (mock Transport)", () => {
     const names = Object.getOwnPropertyNames(Client.prototype);
     assert.equal(names.includes("login"), false);
   });
+
+  it("OpenAPI snapshot is POST-only for check and omits leftover paths", () => {
+    const paths = spec.paths;
+    assert.equal("get" in (paths["/api/v1/projects/{project_ref}/update/check"] ?? {}), false);
+    assert.equal("/api/v1/projects/{project_ref}/clients/login" in paths, false);
+    assert.equal("/api/v1/projects/{project_ref}/update/pack/status" in paths, false);
+    assert.equal("/api/v1/ready" in paths, false);
+    const err = spec.components.schemas.Error?.properties?.error as { properties?: Record<string, unknown> } | undefined;
+    assert.ok(err?.properties && "code" in err.properties && "message" in err.properties && "details" in err.properties);
+  });
+
+  it("reads required JSON body fields from the OpenAPI snapshot", async () => {
+    const transport = new MockTransport((req) => canned(req));
+    const client = new Client({ baseUrl: "http://127.0.0.1:8080", projectRef: "demo", transport });
+    await client.deviceReport({ device_id: "dev-1" });
+    await client.check({ current_version: "1.0.0", os: "windows", arch: "x86_64" });
+    await client.diff({
+      source_version: "1.0.0",
+      target_version: "1.1.0",
+      os: "windows",
+      arch: "x86_64",
+    });
+    await client.pack({
+      source_version: "1.0.0",
+      target_version: "1.1.0",
+      os: "windows",
+      arch: "x86_64",
+    });
+    await client.reportTelemetry({
+      os: "windows",
+      arch: "x86_64",
+      channel: "stable",
+      from_version: "1.0.0",
+      to_version: "1.1.0",
+      status: "installed",
+    });
+    await client.integrity("1.1.0", { os: "windows", arch: "x86_64" });
+
+    const byPath = (suffix: string) =>
+      transport.requests.find((r) => pathnameOf(r).endsWith(suffix) && r.body && r.body.length > 0)!;
+
+    const posts: Array<[string, TransportRequest]> = [
+      ["/api/v1/projects/{project_ref}/clients/report", byPath("/clients/report")],
+      ["/api/v1/projects/{project_ref}/update/check", byPath("/update/check")],
+      ["/api/v1/projects/{project_ref}/update/diff", byPath("/update/diff")],
+      ["/api/v1/projects/{project_ref}/update/pack", byPath("/update/pack")],
+      ["/api/v1/projects/{project_ref}/telemetry/report", byPath("/telemetry/report")],
+    ];
+    for (const [specPath, req] of posts) {
+      const body = JSON.parse(new TextDecoder().decode(req.body!)) as Record<string, unknown>;
+      for (const field of requiredBodyFields(specPath)) {
+        assert.ok(field in body && body[field] !== "" && body[field] != null, `${specPath} missing ${field}`);
+      }
+    }
+    const integ = transport.requests.find((r) => pathnameOf(r).includes("/integrity"))!;
+    const iu = new URL(integ.url);
+    for (const q of requiredQuery("GET", "/api/v1/projects/{project_ref}/versions/{version}/integrity")) {
+      assert.ok(iu.searchParams.get(q), `integrity missing query ${q}`);
+    }
+  });
+
+  it("keeps ETag and Retry-After when the transport preserves HTTP header case", async () => {
+    let n = 0;
+    const transport = new MockTransport(() => {
+      n += 1;
+      if (n === 1) return jsonResponse(204, "", { ETag: '"abc"' });
+      return jsonResponse(429, { error: { code: "RATE_LIMITED", message: "slow" } }, { "Retry-After": "7" });
+    });
+    const client = new Client({ baseUrl: "http://127.0.0.1:8080", projectRef: "demo", transport });
+    const check = await client.check({ current_version: "1.0.0", os: "windows", arch: "x86_64" });
+    assert.equal(check.kind, "no_update");
+    assert.equal(check.etag, '"abc"');
+    await assert.rejects(
+      () => client.project(),
+      (err: unknown) => {
+        assert.ok(err instanceof ApiError);
+        assert.equal(err.retryAfter, 7);
+        return true;
+      },
+    );
+  });
+
+  it("does not send project tokens to a foreign download origin", async () => {
+    const transport = new MockTransport(() => bytesResponse(200, new Uint8Array([1])));
+    const client = new Client({
+      baseUrl: "http://127.0.0.1:8080",
+      projectRef: "demo",
+      projectToken: "secret",
+      channelToken: "chan",
+      transport,
+    });
+    await client.downloadUrl("https://cdn.example/obj.bin");
+    const headers = transport.requests[0]!.headers;
+    const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
+    assert.equal(lower.authorization, undefined);
+    assert.equal(lower["x-project-token"], undefined);
+    assert.equal(lower["x-channel-token"], undefined);
+
+    transport.requests.length = 0;
+    await client.downloadPackage("aa".repeat(32), { exp: "1", sig: "zz", range: "bytes=0-1" });
+    const same = transport.requests[0]!;
+    assert.equal(same.headers.Authorization, "Bearer secret");
+    assert.equal(same.headers["X-Project-Token"], "secret");
+    assert.equal(same.headers["X-Channel-Token"], "chan");
+    assert.equal(same.headers.Range, "bytes=0-1");
+    const qs = new URL(same.url).searchParams;
+    assert.equal(qs.get("exp"), "1");
+    assert.equal(qs.get("sig"), "zz");
+  });
+
+  it("preserves exp/sig already on a package_url", async () => {
+    const transport = new MockTransport(() => bytesResponse(200, new Uint8Array([1])));
+    const client = new Client({ baseUrl: "http://127.0.0.1:8080", projectRef: "demo", transport });
+    await client.downloadUrl("/api/v1/projects/demo/packages/" + "aa".repeat(32) + "?exp=9&sig=zz");
+    const u = new URL(transport.requests[0]!.url);
+    assert.equal(u.searchParams.get("exp"), "9");
+    assert.equal(u.searchParams.get("sig"), "zz");
+    assert.equal(u.host, "127.0.0.1:8080");
+  });
 });
+
+type SpecOp = {
+  requestBody?: { content?: { "application/json"?: { schema?: { $ref?: string; required?: string[] } } } };
+  parameters?: Array<{ in?: string; name?: string; required?: boolean; $ref?: string }>;
+};
+
+function specOp(method: string, specPath: string): SpecOp {
+  return (spec.paths[specPath]?.[method.toLowerCase()] ?? {}) as SpecOp;
+}
+
+function resolveSchema(schema: { $ref?: string; required?: string[] } | undefined): { required?: string[] } {
+  if (!schema) return {};
+  if (schema.$ref) {
+    const name = schema.$ref.split("/").pop()!;
+    return spec.components.schemas[name] ?? {};
+  }
+  return schema;
+}
+
+function requiredBodyFields(specPath: string): string[] {
+  const schema = resolveSchema(specOp("POST", specPath).requestBody?.content?.["application/json"]?.schema);
+  return schema.required ?? [];
+}
+
+function requiredQuery(method: string, specPath: string): string[] {
+  return (specOp(method, specPath).parameters ?? [])
+    .filter((p) => !p.$ref && p.in === "query" && p.required && p.name)
+    .map((p) => p.name!);
+}

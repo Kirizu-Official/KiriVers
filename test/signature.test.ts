@@ -41,5 +41,7 @@ describe("signature payload", () => {
     const pem = rsa.publicKey.export({ type: "spki", format: "pem" }).toString();
     assert.equal(v.verify("rsa-sha256", pem, payload, rsaSig), true);
     assert.equal(v.verify("rsa-sha256", pem, payload + "x", rsaSig), false);
+    assert.equal(v.verify("ed25519", "not-a-pem", payload, edSig), false);
+    assert.equal(v.verify("ed25519", pem, payload, edSig), false);
   });
 });

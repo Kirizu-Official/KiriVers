@@ -28,7 +28,7 @@ import type {
   UpdateCheckRequest,
 } from "./types.js";
 import { CAPABILITY_FULL_PACKAGE } from "./types.js";
-import { etagOf, resolveUrl, withQuery } from "./url.js";
+import { etagOf, lowerHeaderRecord, resolveUrl, sameOrigin, withQuery } from "./url.js";
 
 export interface PackPollOptions {
   initialDelayMs?: number;
@@ -371,19 +371,30 @@ export class Client {
   ): Promise<TransportResponse> {
     const headers: Record<string, string> = {
       Accept: opts.binary ? "*/*" : "application/json",
-      ...this.authHeaders(),
-      ...opts.headers,
     };
+    if (sameOrigin(this.baseUrl, url)) {
+      Object.assign(headers, this.authHeaders());
+    }
+    Object.assign(headers, opts.headers);
+    if (!sameOrigin(this.baseUrl, url)) {
+      for (const key of Object.keys(headers)) {
+        const lower = key.toLowerCase();
+        if (lower === "authorization" || lower === "x-project-token" || lower === "x-channel-token") {
+          delete headers[key];
+        }
+      }
+    }
     let body: Uint8Array | null = null;
     if (opts.json !== undefined) {
       headers["Content-Type"] = "application/json";
       body = new TextEncoder().encode(JSON.stringify(opts.json));
     }
     const res = await this.transport.request({ method, url, headers, body });
-    if (!opts.expected.includes(res.status)) {
-      throw errorFromBody(res.status, res.body, res.headers);
+    const normalized = { ...res, headers: lowerHeaderRecord(res.headers) };
+    if (!opts.expected.includes(normalized.status)) {
+      throw errorFromBody(normalized.status, normalized.body, normalized.headers);
     }
-    return res;
+    return normalized;
   }
 
   private parseJson<T>(res: TransportResponse): T {
@@ -391,6 +402,10 @@ export class Client {
     if (text.trim() === "") {
       throw errorFromBody(res.status, res.body, res.headers);
     }
-    return JSON.parse(text) as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw errorFromBody(res.status, res.body, res.headers);
+    }
   }
 }

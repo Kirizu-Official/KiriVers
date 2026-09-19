@@ -121,13 +121,20 @@ export class NodeSignatureVerifier implements SignatureVerifier {
     payload: string,
     sigBase64: string,
   ): boolean {
-    const key = createPublicKey(publicKeyPem);
-    const sig = Buffer.from(sigBase64, "base64");
-    const data = Buffer.from(payload, "utf8");
-    if (algo === "ed25519") {
-      return verify(null, data, key, sig);
+    try {
+      const key = createPublicKey(publicKeyPem);
+      const sig = Buffer.from(sigBase64, "base64");
+      const data = Buffer.from(payload, "utf8");
+      if (algo === "ed25519") {
+        return verify(null, data, key, sig);
+      }
+      if (algo === "rsa-sha256") {
+        return verify("sha256", data, key, sig);
+      }
+      return false;
+    } catch {
+      return false;
     }
-    return verify("sha256", data, key, sig);
   }
 }
 

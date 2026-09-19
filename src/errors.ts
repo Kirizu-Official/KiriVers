@@ -1,3 +1,5 @@
+import { headerGet } from "./url.js";
+
 /**
  * API error with the client-plane envelope `{ error: { code, message, details } }`.
  * Unknown codes are kept as opaque strings.
@@ -22,9 +24,9 @@ export class ApiError extends Error {
     this.details = details;
     this.status = status;
     this.headers = headers;
-    const retry = headers["retry-after"];
+    const retry = headerGet(headers, "retry-after");
     if (retry !== undefined) {
-      const n = Number(retry);
+      const n = Number(retry.trim().split(",")[0]);
       if (Number.isFinite(n)) this.retryAfter = n;
     }
   }

@@ -79,6 +79,8 @@ Not implemented (out of product scope or leftover): `/store/...`, `GET /update/c
 
 `Client.check` sends `capabilities: ["full_package"]` unless you pass more. `Updater` derives capabilities from **live adapters** (D13).
 
+Absolute `package_url` values on another origin (public S3/CDN) are downloaded without `Authorization`, `X-Project-Token`, or `X-Channel-Token`. Same-origin `/packages/{sha256}` URLs keep those headers and `?exp=&sig=`.
+
 ## Adapters
 
 | Adapter | Default | Inject to replace |
