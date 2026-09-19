@@ -103,7 +103,12 @@ class Client(val config: ClientConfig) {
             if (result.status != "pending") return result
             val elapsed = System.currentTimeMillis() - start
             if (elapsed + delay >= options.deadlineMs) throw PackTimeoutException()
-            Thread.sleep(delay)
+            try {
+                Thread.sleep(delay)
+            } catch (ex: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw PackTimeoutException()
+            }
             delay = minOf(delay * 2, options.maxDelayMs)
         }
     }

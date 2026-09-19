@@ -53,6 +53,9 @@ data class UpdateOutcome(
         result = 31 * result + (stagedPath?.hashCode() ?: 0)
         result = 31 * result + (bytes?.contentHashCode() ?: 0)
         result = 31 * result + (sha256?.hashCode() ?: 0)
+        result = 31 * result + applied.hashCode()
+        result = 31 * result + fallbackToFull.hashCode()
+        result = 31 * result + (diffMode?.hashCode() ?: 0)
         return result
     }
 }

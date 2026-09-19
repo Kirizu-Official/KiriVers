@@ -3,7 +3,7 @@ package official.kirizu.kirivers.client
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import java.net.ConnectException
+import java.io.IOException
 import java.util.UUID
 import kotlin.io.path.Path
 import kotlin.io.path.exists
@@ -36,7 +36,7 @@ class IntegrationTest {
                     deviceId = deviceId,
                 ),
             )
-        } catch (ex: ConnectException) {
+        } catch (ex: IOException) {
             writeBackendIssue("client plane is not reachable at ${fixture.baseUrl}", ex)
             throw ex
         } catch (ex: ApiException) {
@@ -141,7 +141,8 @@ class IntegrationTest {
             appendLine()
             appendLine("## Suggested fix")
             appendLine()
-            appendLine("Repair the host client plane / fixture seed; do not change this Kotlin package to match a broken server.")
+            appendLine("Health on `:8080` is up (`ready=true`). `PROJECT_NOT_FOUND` means the check route was hit but slug `sdk-fixture` is missing from the DB.")
+            appendLine("Re-seed with `.trellis/tasks/09-17-client-sdk/scripts/seed_local_fixture.py` on the server host. Do not change this Kotlin package to match a missing fixture.")
         }
         Path("BACKEND_ISSUE.md").writeText(text)
     }

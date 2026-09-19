@@ -3,6 +3,7 @@ package official.kirizu.kirivers.client
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
+import java.text.Normalizer
 import java.util.zip.ZipInputStream
 
 /** SHA-256 (and MD5 when integrity asks). Default: JDK [MessageDigest]. */
@@ -92,7 +93,8 @@ class JdkFileStore(private val root: Path) : FileStore {
         val rootNorm = root.toAbsolutePath().normalize()
         return Files.walk(start).use { stream ->
             stream.filter { Files.isRegularFile(it) }.map { path ->
-                rootNorm.relativize(path.toAbsolutePath().normalize()).toString().replace('\\', '/')
+                val rel = rootNorm.relativize(path.toAbsolutePath().normalize()).toString().replace('\\', '/')
+                Normalizer.normalize(rel, Normalizer.Form.NFC)
             }.toList()
         }
     }

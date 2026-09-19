@@ -1,10 +1,14 @@
 package official.kirizu.kirivers.client
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import java.nio.file.Path
+import kotlinx.serialization.json.jsonPrimitive
+import java.security.MessageDigest
 import kotlin.io.path.Path
 import kotlin.io.path.exists
+import kotlin.io.path.readBytes
 import kotlin.io.path.readText
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -20,10 +24,12 @@ class ContractTest {
 
     @Test
     fun openapiRevisionMatchesSnapshot() {
+        val file = listOf(Path("openapi.client.json"), Path("../openapi.client.json")).first { it.exists() }
+        val digest = MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+        val short = digest.take(4).joinToString("") { "%02X".format(it) }
         val revision = Path("OPENAPI_REVISION").readText().trim()
-        assertTrue(revision.startsWith("1.0.0"))
-        assertTrue(revision.contains("B443DEA6"))
-        assertTrue(spec["info"]!!.jsonObject["version"]!!.toString().contains("1.0.0"))
+        val version = spec["info"]!!.jsonObject["version"]!!.jsonPrimitive.content
+        assertEquals("$version $short", revision)
     }
 
     @Test
@@ -74,34 +80,13 @@ class ContractTest {
         client.downloadMedia("11111111-1111-1111-1111-111111111111")
         client.headMedia("11111111-1111-1111-1111-111111111111")
 
-        val called = transport.methods().toSet()
-        val expected = setOf(
-            "GET" to "/api/v1/health",
-            "GET" to "/api/v1/projects/sdk-fixture",
-            "POST" to "/api/v1/projects/sdk-fixture/clients/report",
-            "POST" to "/api/v1/projects/sdk-fixture/update/check",
-            "GET" to "/api/v1/projects/sdk-fixture/changelog/stable/windows/x86_64",
-            "GET" to "/api/v1/projects/sdk-fixture/versions/1.1.0/integrity",
-            "POST" to "/api/v1/projects/sdk-fixture/update/diff",
-            "POST" to "/api/v1/projects/sdk-fixture/update/pack",
-            "GET" to "/api/v1/projects/sdk-fixture/packages/7f063a6901ebfd0aa7b1adb8af58f4e792f13310f42213767ced623eb0669969",
-            "HEAD" to "/api/v1/projects/sdk-fixture/packages/7f063a6901ebfd0aa7b1adb8af58f4e792f13310f42213767ced623eb0669969",
-            "POST" to "/api/v1/projects/sdk-fixture/telemetry/report",
-            "GET" to "/api/v1/projects/sdk-fixture/channels",
-            "GET" to "/api/v1/projects/sdk-fixture/matrix",
-            "GET" to "/api/v1/projects/sdk-fixture/languages",
-            "GET" to "/api/v1/projects/sdk-fixture/announcements",
-            "GET" to "/api/v1/projects/sdk-fixture/media/11111111-1111-1111-1111-111111111111",
-            "HEAD" to "/api/v1/projects/sdk-fixture/media/11111111-1111-1111-1111-111111111111",
-        )
-        assertEquals(expected, called)
+        val called = transport.methods().map { (method, path) -> method to openApiTemplate(path) }.toSet()
+        assertEquals(nativeOps(spec), called, "handwritten client drifted from openapi.client.json")
 
-        for ((method, path) in expected) {
-            val template = openApiTemplate(path)
-            val item = spec["paths"]!!.jsonObject[template]?.jsonObject
-                ?: fail("OpenAPI missing path $template (from $path)")
-            assertTrue(item.containsKey(method.lowercase()), "OpenAPI missing $method $template")
-        }
+        val integrity = transport.requests.first { RecordingTransport.pathOf(it.url).contains("/integrity") }
+        val integrityQuery = integrity.url.substringAfter('?', missingDelimiterValue = "")
+        assertTrue(integrityQuery.contains("os="), integrity.url)
+        assertTrue(integrityQuery.contains("arch="), integrity.url)
         assertTrue(spec["paths"]!!.jsonObject.keys.any { it.contains("/store/") })
     }
 
@@ -111,16 +96,17 @@ class ContractTest {
         val client = Client(ClientConfig("http://example.test", "demo", transport = transport))
         client.check(CheckRequest(currentVersion = "1.0.0", os = "windows", arch = "x86_64"))
         val body = KiriversJson.parseToJsonElement(transport.last().body!!.toString(Charsets.UTF_8)).jsonObject
-        assertEquals("1.0.0", body["current_version"].toString().trim('"'))
-        assertEquals("windows", body["os"].toString().trim('"'))
-        assertEquals("x86_64", body["arch"].toString().trim('"'))
-        val caps = body["capabilities"].toString()
-        assertTrue(caps.contains("full_package"))
-        assertFalse(caps.contains("binary_delta"))
-        assertFalse(caps.contains("patch_package"))
+        assertEquals("1.0.0", body["current_version"]!!.jsonPrimitive.content)
+        assertEquals("windows", body["os"]!!.jsonPrimitive.content)
+        assertEquals("x86_64", body["arch"]!!.jsonPrimitive.content)
+        val caps = body["capabilities"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf(Capability.FULL_PACKAGE), caps)
         assertFalse(body.containsKey("local_sha256"))
         assertFalse(body.containsKey("dirty_paths"))
         assertFalse(body.containsKey("accepted_delta_algos"))
+        for (name in requiredBodyFields("/api/v1/projects/{project_ref}/update/check", "post")) {
+            assertTrue(body.containsKey(name), "check missing $name")
+        }
     }
 
     @Test
@@ -161,17 +147,19 @@ class ContractTest {
         )
         val byPath = transport.requests.associateBy { RecordingTransport.pathOf(it.url) }
         val report = KiriversJson.parseToJsonElement(byPath["/api/v1/projects/p/clients/report"]!!.body!!.decodeToString()).jsonObject
-        assertTrue(report.containsKey("device_id"))
+        for (name in requiredBodyFields("/api/v1/projects/{project_ref}/clients/report", "post")) {
+            assertTrue(report.containsKey(name), "report missing $name")
+        }
         val diff = KiriversJson.parseToJsonElement(byPath["/api/v1/projects/p/update/diff"]!!.body!!.decodeToString()).jsonObject
-        for (name in listOf("source_version", "target_version", "os", "arch")) {
+        for (name in requiredBodyFields("/api/v1/projects/{project_ref}/update/diff", "post")) {
             assertTrue(diff.containsKey(name), "diff missing $name")
         }
         val pack = KiriversJson.parseToJsonElement(byPath["/api/v1/projects/p/update/pack"]!!.body!!.decodeToString()).jsonObject
-        for (name in listOf("source_version", "target_version", "os", "arch")) {
+        for (name in requiredBodyFields("/api/v1/projects/{project_ref}/update/pack", "post")) {
             assertTrue(pack.containsKey(name), "pack missing $name")
         }
         val tel = KiriversJson.parseToJsonElement(byPath["/api/v1/projects/p/telemetry/report"]!!.body!!.decodeToString()).jsonObject
-        for (name in listOf("os", "arch", "channel", "from_version", "to_version", "status")) {
+        for (name in requiredBodyFields("/api/v1/projects/{project_ref}/telemetry/report", "post")) {
             assertTrue(tel.containsKey(name), "telemetry missing $name")
         }
     }
@@ -220,11 +208,46 @@ class ContractTest {
 
     private fun openApiTemplate(path: String): String {
         var p = path.replace("/projects/sdk-fixture", "/projects/{project_ref}")
+        p = p.replace("/projects/p/", "/projects/{project_ref}/")
+        p = p.replace("/projects/p", "/projects/{project_ref}")
         p = p.replace("/changelog/stable/windows/x86_64", "/changelog/{channel}/{os}/{arch}")
         p = p.replace("/versions/1.1.0/integrity", "/versions/{version}/integrity")
         p = Regex("/packages/[^/]+").replace(p, "/packages/{ref}")
         p = Regex("/media/[^/]+").replace(p, "/media/{id}")
         return p
+    }
+
+    private fun nativeOps(spec: JsonObject): Set<Pair<String, String>> {
+        val skipKeys = setOf("parameters", "summary", "description", "servers")
+        val out = linkedSetOf<Pair<String, String>>()
+        for ((path, item) in spec["paths"]!!.jsonObject) {
+            if (path.contains("/store/") || path.endsWith("/openapi.json")) continue
+            for (method in item.jsonObject.keys) {
+                if (method.startsWith("x-") || method in skipKeys || method.equals("options", ignoreCase = true)) {
+                    continue
+                }
+                val upper = method.uppercase()
+                if (upper in setOf("GET", "POST", "HEAD")) {
+                    out += upper to path
+                }
+            }
+        }
+        return out
+    }
+
+    private fun requiredBodyFields(template: String, method: String): Set<String> {
+        val op = spec["paths"]!!.jsonObject[template]?.jsonObject?.get(method)?.jsonObject
+            ?: fail("OpenAPI missing $method $template")
+        val schema = op["requestBody"]
+            ?.jsonObject?.get("content")
+            ?.jsonObject?.get("application/json")
+            ?.jsonObject?.get("schema")
+            ?.jsonObject
+            ?: return emptySet()
+        val resolved = schema["\$ref"]?.jsonPrimitive?.content?.substringAfterLast('/')?.let { name ->
+            spec["components"]!!.jsonObject["schemas"]!!.jsonObject[name]!!.jsonObject
+        } ?: schema
+        return resolved["required"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet() ?: emptySet()
     }
 
     private fun canned(req: HttpRequest): HttpResponse {
