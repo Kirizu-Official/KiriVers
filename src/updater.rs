@@ -98,7 +98,11 @@ impl Updater {
     }
 
     pub fn check_request(&self, req: &UpdateRequest) -> CheckRequest {
-        let (capabilities, accepted_delta_algos) = check_capabilities(&self.adapters);
+        let (mut capabilities, accepted_delta_algos) = check_capabilities(&self.adapters);
+        // D13: do not advertise file_list unless this run has a tree that can accept files.
+        if req.install_dir.is_none() {
+            capabilities.retain(|c| c.as_str() != "file_list");
+        }
         CheckRequest {
             current_version: req.current_version.clone(),
             os: req.os.clone(),
@@ -212,9 +216,19 @@ impl Updater {
         std::fs::write(&staged, &bytes)?;
 
         let mut applied = false;
-        if let (Some(replacer), Some(dest)) = (&self.adapters.replacer, req.dest.as_ref()) {
+        let mut result_path = staged.clone();
+        if diff_mode == "patch_package" {
+            // Members were unpacked into install_dir; do not rename the zip onto dest.
+            if let Some(install) = &req.install_dir {
+                if self.adapters.unpacker.is_some() {
+                    applied = true;
+                    result_path = install.clone();
+                }
+            }
+        } else if let (Some(replacer), Some(dest)) = (&self.adapters.replacer, req.dest.as_ref()) {
             replacer.replace(&staged, dest)?;
             applied = true;
+            result_path = dest.clone();
         }
 
         Ok(UpdateResult {
@@ -225,11 +239,7 @@ impl Updater {
             },
             check: None,
             etag: None,
-            staged_path: Some(if applied {
-                req.dest.clone().unwrap_or(staged)
-            } else {
-                staged
-            }),
+            staged_path: Some(result_path),
             applied,
             diff_mode: Some(diff_mode),
         })
@@ -420,7 +430,7 @@ impl Updater {
         }
         if let Some(unpacker) = &self.adapters.unpacker {
             if let Some(files) = &pack.files {
-                unpacker.unpack(&dl.body, files, &req.stage_dir)?;
+                unpacker.unpack(&dl.body, files, install)?;
             }
         }
         Ok((
@@ -538,8 +548,11 @@ pub fn needed_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::Client;
+    use crate::config::Config;
     use crate::filestore::StdFileStore;
     use crate::hasher::{Hasher, StdHasher};
+    use std::path::PathBuf;
 
     #[test]
     fn keep_if_exists_omitted() {
@@ -582,5 +595,49 @@ mod tests {
         let n = needed_paths(&StdFileStore, &h, &dir, &files).unwrap();
         assert_eq!(n, vec!["missing.bin"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn dummy_update_request(install_dir: Option<PathBuf>) -> UpdateRequest {
+        UpdateRequest {
+            current_version: "1.0.0".into(),
+            os: "windows".into(),
+            arch: "x86_64".into(),
+            channel: Some("stable".into()),
+            device_id: Some("sdk-rust-test".into()),
+            hw_rev: None,
+            os_version: None,
+            custom: None,
+            report_device: false,
+            if_none_match: None,
+            install_dir,
+            local_file: None,
+            stage_dir: std::env::temp_dir(),
+            dest: None,
+            pack_poll: PackPollOptions::default(),
+        }
+    }
+
+    #[test]
+    fn updater_file_list_requires_install_dir() {
+        let client = Client::with_transport(
+            Config::new("http://example.test", "sdk-fixture"),
+            std::sync::Arc::new(crate::transport::FnTransport::new(|_| {
+                Ok(crate::transport::HttpResponse {
+                    status: 204,
+                    headers: vec![],
+                    body: vec![],
+                })
+            })),
+        )
+        .unwrap();
+        let updater = Updater::new(client, crate::adapters::Adapters::defaults());
+        let without = updater.check_request(&dummy_update_request(None));
+        assert!(without.capabilities.contains(&"full_package".into()));
+        assert!(without.capabilities.contains(&"patch_package".into()));
+        assert!(!without.capabilities.contains(&"file_list".into()));
+        assert!(without.accepted_delta_algos.is_empty());
+
+        let with = updater.check_request(&dummy_update_request(Some(std::env::temp_dir())));
+        assert!(with.capabilities.contains(&"file_list".into()));
     }
 }

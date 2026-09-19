@@ -101,7 +101,7 @@ Runtime crates on crates.io must stay on that list (plus their transitive depend
 |-----------------|------------------|
 | Transport | `full_package` |
 | ArchiveUnpacker (default zip) | `patch_package` |
-| FileStore that can write files (default `std::fs`) | `file_list` |
+| FileStore that can write files (default `std::fs`) and `UpdateRequest.install_dir` is set | `file_list` |
 | Patcher with non-empty `supported_algos()` | `binary_delta` + those algo names |
 
 Without an injected `Patcher`, the SDK **never** reports `binary_delta`. Unknown delta magic (`KVDIFFHP1\n`, `HDIFF13&`, `BSDIFF40`, VCDIFF `D6 C3 C4`) is not cross-decoded; Update falls back to the full package.

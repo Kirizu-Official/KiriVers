@@ -196,4 +196,27 @@ mod tests {
             .verify("ed25519", &pem, "tampered", &b64)
             .unwrap_err();
     }
+
+    #[test]
+    fn rsa_sha256_verifies_go_pkcs1v15_vector() {
+        // PKIX public key + PKCS1v15-SHA256 signature produced with crypto/rsa
+        // (same as pkg/signature.VerifyPayload). Payload is BuildCheckPayload.
+        let pem = "-----BEGIN PUBLIC KEY-----\n\
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmgDXlH9b9VT/k9FedzHX\n\
+8TKZTwpTDT0sbHHW3179XDfBX2IRgfGxqWIcySkZ3S5/NpX1DlsJhzZrD3jotgqj\n\
+O5yXQbfwGmFYYgA2rOBv0EofLoG/haJE8/drZYtHWfmJ9iJj+BE4Wp7VctyaCO1a\n\
+B5oKXUffMc3WNEET0zNMgSDxsWFJ/P96xhDKezOlsLpzAhA5yOmD3QO+vysrYf3I\n\
+KqtdRhe0qPAwB4IDJTMX1/yuWaaJz+xIyUgTINwjypnJavtUVdoLo8yfKnKJ3zu5\n\
+kmZunGFuDC3cWsasLZv25ezF0elwFp4v4uBgDH+6hKwVQjol2TgovnuNb66y9VB/\n\
+QQIDAQAB\n\
+-----END PUBLIC KEY-----\n";
+        let sig = "RsecRB6RNT6DOnFp/MiJ775eToV0VpzBjnknG93SR2prEtYfHzWW/+squa4XUkk/GaaEwgUehGn91rqOtRp6QYC8Y7psR12xocfvYfKWMO7ddrnbXB+iG9OaFg6tzylqlewrNWbmrYJ/axGIECD0nWP5mXT5+kWtalgH68TObI3upSDGPhfkeD7/w+7epYUP192yfzUGcEcG9qmLsotAt3xfwRVYJudSjduY7PB026CqzGFVMzEXUG8o1LxAMEQSDge+eYNBRFWE3BzRtRaiw2bXHTVBkfc7dwzHVYFdmTXbkFQiuI5BkLf8Dvp8I9wXRgMAICarhMnPw068P4c2jg==";
+        let payload = "1\n1.1.0\n\n/p\n12\nab";
+        StdSignatureVerifier
+            .verify("rsa-sha256", pem, payload, sig)
+            .unwrap();
+        StdSignatureVerifier
+            .verify("rsa-sha256", pem, "tampered", sig)
+            .unwrap_err();
+    }
 }

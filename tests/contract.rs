@@ -477,31 +477,38 @@ fn updater_without_patcher_does_not_send_binary_delta() {
     let updater = Updater::new(client, Adapters::defaults());
     let dir = std::env::temp_dir().join(format!("kirivers-up-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
-    updater
-        .run(&UpdateRequest {
-            current_version: "1.0.0".into(),
-            os: "windows".into(),
-            arch: "x86_64".into(),
-            channel: Some("stable".into()),
-            device_id: Some("sdk-rust-test".into()),
-            hw_rev: None,
-            os_version: None,
-            custom: None,
-            report_device: false,
-            if_none_match: None,
-            install_dir: None,
-            local_file: None,
-            stage_dir: dir.clone(),
-            dest: None,
-            pack_poll: PackPollOptions::default(),
-        })
-        .unwrap();
+    let req = UpdateRequest {
+        current_version: "1.0.0".into(),
+        os: "windows".into(),
+        arch: "x86_64".into(),
+        channel: Some("stable".into()),
+        device_id: Some("sdk-rust-test".into()),
+        hw_rev: None,
+        os_version: None,
+        custom: None,
+        report_device: false,
+        if_none_match: None,
+        install_dir: None,
+        local_file: None,
+        stage_dir: dir.clone(),
+        dest: None,
+        pack_poll: PackPollOptions::default(),
+    };
+    let preview = updater.check_request(&req);
+    assert!(
+        !preview.capabilities.iter().any(|c| c == "file_list"),
+        "Updater must not advertise file_list without install_dir: {:?}",
+        preview.capabilities
+    );
+    updater.run(&req).unwrap();
     let calls = script.calls.lock().unwrap();
     let first = &calls[0];
     let body: Value = serde_json::from_slice(first.body.as_ref().unwrap()).unwrap();
     let caps = body["capabilities"].as_array().unwrap();
     assert!(caps.iter().any(|c| c == "full_package"));
+    assert!(caps.iter().any(|c| c == "patch_package"));
     assert!(!caps.iter().any(|c| c == "binary_delta"));
+    assert!(!caps.iter().any(|c| c == "file_list"));
     let empty_algos = body["accepted_delta_algos"].is_null()
         || body["accepted_delta_algos"]
             .as_array()
@@ -593,4 +600,296 @@ fn d18_direct_dependency_names() {
     assert!(!section.contains("ureq"));
     assert!(!section.contains("tokio"));
     assert!(!section.contains("hyper"));
+}
+
+fn required_json_fields(method: &str, path: &str) -> Vec<String> {
+    let spec = spec_paths();
+    let schema =
+        &spec["paths"][path][method]["requestBody"]["content"]["application/json"]["schema"];
+    let resolved = if let Some(r) = schema.get("$ref").and_then(|v| v.as_str()) {
+        let name = r.rsplit('/').next().unwrap();
+        &spec["components"]["schemas"][name]
+    } else {
+        schema
+    };
+    resolved["required"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(ToOwned::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn required_query_names(method: &str, path: &str) -> Vec<String> {
+    let spec = spec_paths();
+    let mut names = Vec::new();
+    let mut take = |params: &Value| {
+        if let Some(arr) = params.as_array() {
+            for p in arr {
+                if p["in"] == "query" && p["required"] == true {
+                    if let Some(n) = p["name"].as_str() {
+                        names.push(n.to_string());
+                    }
+                }
+            }
+        }
+    };
+    take(&spec["paths"][path]["parameters"]);
+    take(&spec["paths"][path][method]["parameters"]);
+    names
+}
+
+#[test]
+fn openapi_native_surface_matches_client() {
+    let spec = spec_paths();
+    let paths = spec["paths"].as_object().unwrap();
+    let mut documented = Vec::new();
+    for (path, item) in paths {
+        if path.contains("/store/") || path.as_str() == "/api/v1/openapi.json" {
+            continue;
+        }
+        let item = item.as_object().unwrap();
+        for method in item.keys() {
+            if matches!(
+                method.as_str(),
+                "parameters" | "summary" | "description" | "servers" | "options"
+            ) || method.starts_with("x-")
+            {
+                continue;
+            }
+            documented.push((method.to_ascii_lowercase(), path.clone()));
+        }
+    }
+    documented.sort();
+    let mut implemented: Vec<(String, String)> = NATIVE
+        .iter()
+        .map(|(m, p)| ((*m).to_string(), (*p).to_string()))
+        .collect();
+    implemented.sort();
+    let missing: Vec<_> = documented
+        .iter()
+        .filter(|d| !implemented.contains(d))
+        .cloned()
+        .collect();
+    let extra: Vec<_> = implemented
+        .iter()
+        .filter(|i| !documented.contains(i))
+        .cloned()
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "client missing OpenAPI native ops: {missing:?}"
+    );
+    assert!(
+        extra.is_empty(),
+        "client extra ops not in OpenAPI native set: {extra:?}"
+    );
+}
+
+#[test]
+fn openapi_omits_leftover_paths_and_check_is_post_only() {
+    let spec = spec_paths();
+    let paths = spec["paths"].as_object().unwrap();
+    assert!(paths
+        .get("/api/v1/projects/{project_ref}/update/check")
+        .and_then(|p| p.get("get"))
+        .is_none());
+    assert!(!paths.contains_key("/api/v1/projects/{project_ref}/clients/login"));
+    assert!(!paths.contains_key("/api/v1/projects/{project_ref}/update/pack/status"));
+    assert!(!paths.contains_key("/api/v1/ready"));
+    let err = &spec["components"]["schemas"]["Error"]["properties"]["error"]["properties"];
+    assert!(err.get("code").is_some());
+    assert!(err.get("message").is_some());
+    assert!(err.get("details").is_some());
+}
+
+#[test]
+fn check_diff_pack_telemetry_required_openapi_fields() {
+    let (c, script) = client_with(vec![
+        json_resp(204, json!({})),
+        json_resp(
+            200,
+            json!({
+                "diff_mode": "full_package",
+                "root_hash": "",
+                "version_integer": null,
+                "version_semver": "1.1.0",
+                "channel": "stable",
+                "compare_engine": "semver"
+            }),
+        ),
+        json_resp(200, json!({"status": "ready"})),
+        json_resp(202, json!({"status": "accepted"})),
+        json_resp(
+            200,
+            json!({
+                "version_integer": null,
+                "version_semver": "1.1.0",
+                "channel": "stable",
+                "package_type": "single_file",
+                "root_hash": "",
+                "full_package_url": "/p",
+                "file_name": "a.bin",
+                "size": 1,
+                "sha256": "aa",
+                "files": []
+            }),
+        ),
+        json_resp(
+            200,
+            json!({"ip":"127.0.0.1","country_code":"","region_code":"","geo_i18n":{}}),
+        ),
+    ]);
+
+    c.check(&CheckRequest {
+        current_version: "1.0.0".into(),
+        os: "windows".into(),
+        arch: "x86_64".into(),
+        ..CheckRequest::default()
+    })
+    .unwrap();
+    c.diff(&DiffRequest {
+        source_version: "1.0.0".into(),
+        target_version: "1.1.0".into(),
+        os: "windows".into(),
+        arch: "x86_64".into(),
+        local_sha256: Some("ab".repeat(32)),
+        ..DiffRequest::default()
+    })
+    .unwrap();
+    c.pack(&PackRequest {
+        source_version: "1.0.0".into(),
+        target_version: "1.1.0".into(),
+        os: "windows".into(),
+        arch: "x86_64".into(),
+        needed_paths: vec!["a".into()],
+        ..PackRequest::default()
+    })
+    .unwrap();
+    c.report_telemetry(&TelemetryReport {
+        os: "windows".into(),
+        arch: "x86_64".into(),
+        channel: "stable".into(),
+        from_version: "1.0.0".into(),
+        to_version: "1.1.0".into(),
+        status: "installed".into(),
+        device_id: None,
+        diff_mode: None,
+        error_code: None,
+        error_message: None,
+    })
+    .unwrap();
+    c.integrity(&IntegrityQuery {
+        version: "1.1.0".into(),
+        os: "linux".into(),
+        arch: "arm64".into(),
+        ..IntegrityQuery::default()
+    })
+    .unwrap();
+    c.device_report(&DeviceReportInput {
+        device_id: "dev-1".into(),
+        ..DeviceReportInput::default()
+    })
+    .unwrap();
+
+    let calls = script.calls.lock().unwrap();
+    let pairs = [
+        (
+            "post",
+            "/api/v1/projects/{project_ref}/update/check",
+            &calls[0],
+        ),
+        (
+            "post",
+            "/api/v1/projects/{project_ref}/update/diff",
+            &calls[1],
+        ),
+        (
+            "post",
+            "/api/v1/projects/{project_ref}/update/pack",
+            &calls[2],
+        ),
+        (
+            "post",
+            "/api/v1/projects/{project_ref}/telemetry/report",
+            &calls[3],
+        ),
+        (
+            "post",
+            "/api/v1/projects/{project_ref}/clients/report",
+            &calls[5],
+        ),
+    ];
+    for (method, path, req) in pairs {
+        let required = required_json_fields(method, path);
+        let payload: Value = serde_json::from_slice(req.body.as_ref().unwrap()).unwrap();
+        for field in required {
+            assert!(
+                payload.get(&field).is_some(),
+                "{path} missing required {field}"
+            );
+            let v = &payload[field.as_str()];
+            let empty = v.is_null()
+                || v.as_str() == Some("")
+                || v.as_array().map(|a| a.is_empty()).unwrap_or(false);
+            assert!(!empty, "{path} required {field} is empty");
+        }
+    }
+    let integ = &calls[4];
+    assert_eq!(integ.method, "GET");
+    for q in required_query_names(
+        "get",
+        "/api/v1/projects/{project_ref}/versions/{version}/integrity",
+    ) {
+        assert!(
+            integ.url.contains(&format!("{q}=")),
+            "integrity missing required query {q}: {}",
+            integ.url
+        );
+    }
+}
+
+#[test]
+fn error_envelope_preserves_details_and_retry_after() {
+    let (c, _) = client_with(vec![HttpResponse {
+        status: 429,
+        headers: vec![("retry-after".into(), "7".into())],
+        body: serde_json::to_vec(&json!({
+            "error": {
+                "code": "RATE_LIMITED",
+                "message": "slow down",
+                "details": {"k": 1}
+            }
+        }))
+        .unwrap(),
+    }]);
+    let err = c.channels().unwrap_err();
+    assert_eq!(err.code(), Some("RATE_LIMITED"));
+    assert!(err.is_rate_limited());
+    match err {
+        Error::Api {
+            status,
+            details,
+            retry_after,
+            ..
+        } => {
+            assert_eq!(status, 429);
+            assert_eq!(details, Some(json!({"k": 1})));
+            assert_eq!(retry_after.as_deref(), Some("7"));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn omitted_optional_check_fields_deserialize() {
+    let req: CheckRequest =
+        serde_json::from_str(r#"{"current_version":"1.0.0","os":"linux","arch":"arm64"}"#).unwrap();
+    assert_eq!(req.channel, None);
+    assert!(req.capabilities.is_empty());
+    let encoded = serde_json::to_value(&req).unwrap();
+    assert!(encoded.get("local_sha256").is_none());
+    assert!(encoded.get("dirty_paths").is_none());
 }

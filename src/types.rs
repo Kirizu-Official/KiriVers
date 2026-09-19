@@ -15,13 +15,13 @@ pub struct CheckRequest {
     pub current_version: String,
     pub os: String,
     pub arch: String,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub channel: Option<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub hw_rev: Option<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub os_version: Option<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub device_id: Option<String>,
     #[serde(default, skip_serializing_if = "skip_empty_vec")]
     pub capabilities: Vec<String>,
@@ -89,15 +89,15 @@ pub struct UpdateCheck {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DeviceReportInput {
     pub device_id: String,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub version: Option<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub os: Option<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub arch: Option<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub channel: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom: Option<Value>,
 }
 
@@ -219,19 +219,19 @@ pub struct DiffRequest {
     pub target_version: String,
     pub os: String,
     pub arch: String,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub channel: Option<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub device_id: Option<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub hw_rev: Option<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub local_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "skip_empty_vec")]
     pub capabilities: Vec<String>,
     #[serde(default, skip_serializing_if = "skip_empty_vec")]
     pub accepted_delta_algos: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefer_full: Option<bool>,
 }
 
@@ -272,11 +272,11 @@ pub struct PackRequest {
     pub arch: String,
     #[serde(default, skip_serializing_if = "skip_empty_vec")]
     pub needed_paths: Vec<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub channel: Option<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub device_id: Option<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub hw_rev: Option<String>,
 }
 
@@ -323,13 +323,13 @@ pub struct TelemetryReport {
     pub from_version: String,
     pub to_version: String,
     pub status: String,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub device_id: Option<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub diff_mode: Option<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub error_code: Option<String>,
-    #[serde(skip_serializing_if = "skip_empty_str")]
+    #[serde(default, skip_serializing_if = "skip_empty_str")]
     pub error_message: Option<String>,
 }
 
