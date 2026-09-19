@@ -1,0 +1,58 @@
+name: ci
+on:
+  pull_request:
+    branches: [sdk/c]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Conventional Commits
+        run: |
+          python3 scripts/sdk_release.py commitlint \
+            --pr-title "${{ github.event.pull_request.title }}" \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}"
+
+  # The same suite must build and pass with and without the hosted adapters:
+  # hosted links curl/OpenSSL/libzip/utf8proc, embedded keeps only cJSON and
+  # expects the host application to inject the adapters.
+  test:
+    needs: commitlint
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [hosted, embedded]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Hosted dependencies
+        if: matrix.preset == 'hosted'
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y --no-install-recommends
+          libcurl4-openssl-dev libssl-dev libzip-dev libutf8proc-dev
+      - run: cmake --preset ${{ matrix.preset }}
+      - run: cmake --build --preset ${{ matrix.preset }}
+      - run: ctest --preset ${{ matrix.preset }} --output-on-failure
+
+  selfcheck:
+    needs: commitlint
+    runs-on: ubuntu-latest
+    env:
+      SDK_LANG: c
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - run: python3 scripts/sdk_release.py self-check
