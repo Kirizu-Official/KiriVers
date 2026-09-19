@@ -905,7 +905,8 @@ def self_check() -> None:
     # CHANGELOG.md is created when the branch has none.
     cl = Path("CHANGELOG.md")
     existed = cl.is_file()
-    original = cl.read_text(encoding="utf-8") if existed else None
+    # Byte-for-byte restore: a text round-trip would rewrite CRLF files.
+    original = cl.read_bytes() if existed else None
     try:
         if cl.is_file():
             cl.unlink()
@@ -922,7 +923,7 @@ def self_check() -> None:
         assert text.startswith("# Changelog\n\n## v0.3.0") and "## old" in text
     finally:
         if existed and original is not None:
-            cl.write_text(original, encoding="utf-8")
+            cl.write_bytes(original)
         elif cl.is_file():
             cl.unlink()
 
