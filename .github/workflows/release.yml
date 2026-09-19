@@ -1,25 +1,35 @@
 name: release
+# A merged pull request is the only publish entry point: a direct push
+# (including the bot's own bump commit) and a closed-but-unmerged pull
+# request must both stay silent.
 on:
-  push:
+  pull_request:
+    types: [closed]
     branches: [sdk/python]
-    tags-ignore:
-      - "**"
 concurrency:
-  group: release-python-${{ github.ref }}
+  group: release-python
   cancel-in-progress: false
 permissions:
   contents: write
+  # Read the merge commit's pull request number for the changelog.
+  pull-requests: read
   id-token: write
 jobs:
   release:
+    # Only a merged pull request publishes.
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     env:
       SDK_LANG: python
+      # Fast path for the changelog's `#<PR>` tail: this run is the merge
+      # of exactly that pull request.
+      KIRIVERS_PR_NUMBER: ${{ github.event.pull_request.number }}
       SDK_PUBLISH: ${{ vars.SDK_PUBLISH }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: refs/heads/sdk/python
           fetch-depth: 0
           fetch-tags: true
 
@@ -49,9 +59,10 @@ jobs:
           ACTION=$(jq -r .action apply.json)
           VERSION=$(jq -r .version apply.json)
           TAG=$(jq -r .tag apply.json)
-          BRANCH="${{ github.ref_name }}"
+          BRANCH=sdk/python
           if [ "$ACTION" = bump ]; then
-            git add -u
+            # apply writes the manifest, CHANGELOG.md and the notes file.
+            git add -A
             git restore --staged sdk-release-notes.md 2>/dev/null || true
             git status
             git diff --cached --quiet || git commit -m "chore(release): $VERSION"
