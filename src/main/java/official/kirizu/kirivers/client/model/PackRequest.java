@@ -14,5 +14,8 @@ public final class PackRequest {
   public String channel;
   public String hwRev;
   public String deviceId;
+
+  /** Always emitted (including {@code []}) so pack poll identity stays stable. */
+  @JsonInclude(JsonInclude.Include.ALWAYS)
   public List<String> neededPaths;
 }

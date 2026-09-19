@@ -152,10 +152,7 @@ public final class Updater {
       return downloadFull(request, check, "full_package");
     }
     byte[] delta = client.downloadUrl(diff.packageUrl, null).body();
-    if (DeltaMagic.isUnknown(delta)) {
-      throw new IOException("unknown delta magic");
-    }
-    DeltaMagic.requireKnown(delta);
+    DeltaMagic.requireSupported(cfg.patcher().supportedAlgos(), delta);
     byte[] source = request.localFile;
     if (source == null) {
       throw new IOException("localFile is required to apply a binary delta");
@@ -163,7 +160,14 @@ public final class Updater {
     byte[] patched = cfg.patcher().apply(source, delta);
     String expect = check.sha256;
     verifySha(patched, expect);
-    verifySignature(check, check.packageUrl, check.size, check.sha256, check.signature);
+    verifySignature(
+        check.versionInteger,
+        check.versionSemver,
+        check.rootHash,
+        check.packageUrl,
+        check.size,
+        check.sha256,
+        check.signature);
     Path dest = stageFile(request, check.fileName, patched);
     return new Downloaded(dest, expect, "binary_delta");
   }
@@ -198,7 +202,14 @@ public final class Updater {
     }
     byte[] zip = client.downloadUrl(body.packageUrl, null).body();
     verifySha(zip, body.sha256);
-    verifySignature(check, body.packageUrl, body.size, body.sha256, body.signature);
+    verifySignature(
+        body.versionInteger != null ? body.versionInteger : check.versionInteger,
+        body.versionSemver != null ? body.versionSemver : check.versionSemver,
+        body.rootHash != null ? body.rootHash : check.rootHash,
+        body.packageUrl,
+        body.size,
+        body.sha256,
+        body.signature);
     Path destDir = request.stageDir;
     if (destDir == null) {
       throw new IOException("stageDir is required");
@@ -224,7 +235,14 @@ public final class Updater {
     }
     byte[] bytes = client.downloadUrl(check.packageUrl, null).body();
     verifySha(bytes, check.sha256);
-    verifySignature(check, check.packageUrl, check.size, check.sha256, check.signature);
+    verifySignature(
+        check.versionInteger,
+        check.versionSemver,
+        check.rootHash,
+        check.packageUrl,
+        check.size,
+        check.sha256,
+        check.signature);
     Path dest = stageFile(request, check.fileName, bytes);
     return new Downloaded(dest, check.sha256, mode);
   }
@@ -258,33 +276,36 @@ public final class Updater {
     }
   }
 
-  private void verifySignature(UpdateCheck200 check, String packageUrl, Long size, String sha, String signature) {
+  private void verifySignature(
+      Long versionInteger,
+      String versionSemver,
+      String rootHash,
+      String packageUrl,
+      Long size,
+      String sha,
+      String signature) {
     Config cfg = client.config();
     if (signature == null || signature.isBlank() || cfg.signingKeys().isEmpty() || cfg.signatureVerifier() == null) {
       return;
     }
     byte[] payload =
         JdkSignatureVerifier.buildCheckPayload(
-            JdkSignatureVerifier.decimalOrEmpty(check.versionInteger),
-            check.versionSemver,
-            check.rootHash,
+            JdkSignatureVerifier.decimalOrEmpty(versionInteger),
+            versionSemver,
+            rootHash,
             packageUrl,
             JdkSignatureVerifier.decimalOrEmpty(size),
             sha);
-    try {
-      SignatureVerifier.SignatureException last = null;
-      for (var key : cfg.signingKeys()) {
-        try {
-          cfg.signatureVerifier().verify(key.algo(), key.publicKeyPem(), payload, signature);
-          return;
-        } catch (SignatureVerifier.SignatureException e) {
-          last = e;
-        }
+    SignatureVerifier.SignatureException last = null;
+    for (var key : cfg.signingKeys()) {
+      try {
+        cfg.signatureVerifier().verify(key.algo(), key.publicKeyPem(), payload, signature);
+        return;
+      } catch (SignatureVerifier.SignatureException e) {
+        last = e;
       }
-      throw new ApiException(0, "SIGNATURE_MISMATCH", last == null ? "signature mismatch" : last.getMessage(), null, null);
-    } catch (ApiException e) {
-      throw e;
     }
+    throw new ApiException(0, "SIGNATURE_MISMATCH", last == null ? "signature mismatch" : last.getMessage(), null, null);
   }
 
   private List<String> neededPaths(Path installDir, List<FileEntry> files) throws IOException {

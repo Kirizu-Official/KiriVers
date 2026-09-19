@@ -52,4 +52,19 @@ class PackPollTest {
     assertTrue(json.contains("source_version"));
     assertTrue(json.contains("target_version"));
   }
+
+  @Test
+  void emptyNeededPathsAreSerialized() {
+    RecordingTransport transport = new RecordingTransport();
+    Client client =
+        new Client(Config.builder().baseUrl("http://127.0.0.1:8080").projectRef("sdk-fixture").transport(transport).build());
+    PackRequest req = new PackRequest();
+    req.sourceVersion = "1.0.0";
+    req.targetVersion = "1.1.0";
+    req.os = "windows";
+    req.arch = "x86_64";
+    client.pack(req);
+    String json = new String(transport.last().body(), StandardCharsets.UTF_8);
+    assertTrue(json.contains("\"needed_paths\":[]") || json.contains("\"needed_paths\": []"));
+  }
 }

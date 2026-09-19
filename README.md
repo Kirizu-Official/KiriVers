@@ -124,7 +124,7 @@ Check `capabilities` follow **live adapters**, never empty claims:
 
 Without a Patcher, check **does not** send `binary_delta` or `accepted_delta_algos` (a non-empty algo list would auto-grant delta on the server). `local_sha256` is sent only on `POST /update/diff`, never on check.
 
-Unknown delta magic (`KVDIFFHP1\\n` / `HDIFF13&` / `BSDIFF40` / VCDIFF `D6 C3 C4`) is refused; `Updater` falls back to the full package and never cross-decodes.
+Unknown delta magic (`KVDIFFHP1\n` / `HDIFF13&` / `BSDIFF40` / VCDIFF `D6 C3 C4`) is refused. A Patcher that does not advertise the matching wire algo (`hdiffpatch` / `bsdiff` / `xdelta3`) is also refused. `Updater` falls back to the full package and never cross-decodes.
 
 ## Platforms
 

@@ -133,17 +133,23 @@ public final class Config {
     if (fileStore != null && fileStore.canWriteIndividualFiles()) {
       caps.add("file_list");
     }
-    if (patcher != null && patcher.supportedAlgos() != null && !patcher.supportedAlgos().isEmpty()) {
+    if (!acceptedDeltaAlgos().isEmpty()) {
       caps.add("binary_delta");
     }
     return List.copyOf(caps);
   }
 
   public List<String> acceptedDeltaAlgos() {
-    if (patcher == null || patcher.supportedAlgos() == null || patcher.supportedAlgos().isEmpty()) {
+    if (patcher == null || patcher.supportedAlgos() == null) {
       return List.of();
     }
-    return List.copyOf(patcher.supportedAlgos());
+    List<String> out = new ArrayList<>();
+    for (String raw : patcher.supportedAlgos()) {
+      if (raw != null && !raw.isBlank()) {
+        out.add(raw.trim());
+      }
+    }
+    return List.copyOf(out);
   }
 
   private static String trimSlash(String url) {

@@ -37,8 +37,19 @@ public final class ZipArchiveUnpacker implements ArchiveUnpacker {
         } else {
           rel = PathUtil.normalize(rel);
         }
-        Path dest = root.resolve(rel).normalize();
-        if (!dest.startsWith(root)) {
+        Path dest = root;
+        for (String part : rel.split("/")) {
+          if (part.isEmpty() || ".".equals(part)) {
+            continue;
+          }
+          Path segment = Path.of(part);
+          if (segment.isAbsolute() || "..".equals(part)) {
+            throw new IOException("zip slip: " + entry.getName());
+          }
+          dest = dest.resolve(part);
+        }
+        dest = dest.normalize();
+        if (!dest.startsWith(root) || dest.equals(root)) {
           throw new IOException("zip slip: " + entry.getName());
         }
         Path parent = dest.getParent();

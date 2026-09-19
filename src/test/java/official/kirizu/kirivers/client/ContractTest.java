@@ -161,6 +161,82 @@ class ContractTest {
     assertEquals(CheckOutcome.Status.NO_UPDATE, out.status());
   }
 
+  @Test
+  void check304IsEtagHitNotAnError() {
+    RecordingTransport transport = new RecordingTransport();
+    transport.handler(
+        r -> {
+          java.util.Map<String, java.util.List<String>> headers = new java.util.LinkedHashMap<>();
+          headers.put("ETag", java.util.List.of("\"abc\""));
+          return new official.kirizu.kirivers.client.adapter.HttpResponse(304, headers, new byte[0]);
+        });
+    Client client = new Client(Config.builder().baseUrl("http://127.0.0.1:8080").projectRef(PROJECT).transport(transport).build());
+    UpdateCheckRequest req = new UpdateCheckRequest();
+    req.currentVersion = "1.1.0";
+    req.os = "windows";
+    req.arch = "x86_64";
+    CheckOutcome out = client.check(req, "\"abc\"");
+    assertEquals(CheckOutcome.Status.NOT_MODIFIED, out.status());
+    assertEquals("\"abc\"", out.etag());
+  }
+
+  @Test
+  void requiredFieldsOnNativeBodies() throws Exception {
+    RecordingTransport transport = new RecordingTransport();
+    Client client = new Client(Config.builder().baseUrl("http://example").projectRef(PROJECT).transport(transport).build());
+
+    ClientLoginInput login = new ClientLoginInput();
+    login.deviceId = "dev-1";
+    client.deviceReport(login);
+    JsonNode report = Json.MAPPER.readTree(transport.last().body());
+    assertTrue(report.has("device_id"));
+    assertEquals("dev-1", report.get("device_id").asText());
+
+    DiffRequest diff = new DiffRequest();
+    diff.sourceVersion = "1.0.0";
+    diff.targetVersion = "1.1.0";
+    diff.os = "windows";
+    diff.arch = "x86_64";
+    diff.localSha256 = "aa";
+    client.diff(diff);
+    JsonNode diffBody = Json.MAPPER.readTree(transport.last().body());
+    assertTrue(diffBody.has("source_version"));
+    assertTrue(diffBody.has("target_version"));
+    assertTrue(diffBody.has("os"));
+    assertTrue(diffBody.has("arch"));
+    assertTrue(diffBody.has("local_sha256"));
+
+    PackRequest pack = new PackRequest();
+    pack.sourceVersion = "1.0.0";
+    pack.targetVersion = "1.1.0";
+    pack.os = "windows";
+    pack.arch = "x86_64";
+    client.pack(pack);
+    JsonNode packBody = Json.MAPPER.readTree(transport.last().body());
+    assertTrue(packBody.has("source_version"));
+    assertTrue(packBody.has("target_version"));
+    assertTrue(packBody.has("os"));
+    assertTrue(packBody.has("arch"));
+    assertTrue(packBody.has("needed_paths"));
+    assertTrue(packBody.get("needed_paths").isArray());
+
+    TelemetryRequest tel = new TelemetryRequest();
+    tel.os = "windows";
+    tel.arch = "x86_64";
+    tel.channel = "stable";
+    tel.fromVersion = "1.0.0";
+    tel.toVersion = "1.1.0";
+    tel.status = "installed";
+    client.reportTelemetry(tel);
+    JsonNode telBody = Json.MAPPER.readTree(transport.last().body());
+    assertTrue(telBody.has("os"));
+    assertTrue(telBody.has("arch"));
+    assertTrue(telBody.has("channel"));
+    assertTrue(telBody.has("from_version"));
+    assertTrue(telBody.has("to_version"));
+    assertTrue(telBody.has("status"));
+  }
+
   private static Set<String> nativeOps(JsonNode spec) {
     Set<String> out = new TreeSet<>();
     Iterator<Map.Entry<String, JsonNode>> paths = spec.get("paths").fields();

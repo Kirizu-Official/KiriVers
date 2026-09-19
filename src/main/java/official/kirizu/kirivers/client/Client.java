@@ -55,13 +55,13 @@ public final class Client {
   }
 
   public StatusOutput health() {
-    HttpResponse resp = send("GET", abs(NativePaths.HEALTH), Map.of(), null, false);
+    HttpResponse resp = send("GET", abs(NativePaths.HEALTH), acceptJson(), null, false);
     requireOk(resp, 200);
     return readJson(resp, StatusOutput.class);
   }
 
   public ProjectPublic project() {
-    HttpResponse resp = send("GET", abs(NativePaths.project(config.projectRef())), jsonHeaders(), null, true);
+    HttpResponse resp = send("GET", abs(NativePaths.project(config.projectRef())), acceptJson(), null, true);
     requireOk(resp, 200);
     return readJson(resp, ProjectPublic.class);
   }
@@ -90,11 +90,14 @@ public final class Client {
     if (body.capabilities == null || body.capabilities.isEmpty()) {
       body.capabilities = new ArrayList<>(config.capabilities());
     }
+    if (!body.capabilities.contains("full_package")) {
+      body.capabilities.add(0, "full_package");
+    }
     if (body.acceptedDeltaAlgos == null) {
       List<String> algos = config.acceptedDeltaAlgos();
       body.acceptedDeltaAlgos = algos.isEmpty() ? null : new ArrayList<>(algos);
-    } else if (body.acceptedDeltaAlgos.isEmpty()) {
-      body.acceptedDeltaAlgos = null;
+    } else {
+      body.acceptedDeltaAlgos = sanitizeAlgos(body.acceptedDeltaAlgos);
     }
     Map<String, String> headers = jsonHeaders();
     if (ifNoneMatch != null && !ifNoneMatch.isBlank()) {
@@ -137,7 +140,7 @@ public final class Client {
             q.changelogLocale,
             "locale",
             q.locale);
-    Map<String, String> headers = jsonHeaders();
+    Map<String, String> headers = acceptJson();
     if (q.ifNoneMatch != null && !q.ifNoneMatch.isBlank()) {
       headers.put("If-None-Match", q.ifNoneMatch);
     }
@@ -168,7 +171,7 @@ public final class Client {
             query.hwRev,
             "channel",
             query.channel);
-    Map<String, String> headers = jsonHeaders();
+    Map<String, String> headers = acceptJson();
     if (query.ifNoneMatch != null && !query.ifNoneMatch.isBlank()) {
       headers.put("If-None-Match", query.ifNoneMatch);
     }
@@ -191,6 +194,9 @@ public final class Client {
     Objects.requireNonNull(request, "request");
     if (request.sourceVersion == null || request.targetVersion == null || request.os == null || request.arch == null) {
       throw new IllegalArgumentException("source_version, target_version, os and arch are required");
+    }
+    if (request.neededPaths == null) {
+      request.neededPaths = List.of();
     }
     byte[] json = writeJson(request);
     HttpResponse resp = send("POST", abs(NativePaths.pack(config.projectRef())), jsonHeaders(), json, true);
@@ -242,19 +248,19 @@ public final class Client {
   }
 
   public ClientChannelList channels() {
-    HttpResponse resp = send("GET", abs(NativePaths.channels(config.projectRef())), jsonHeaders(), null, true);
+    HttpResponse resp = send("GET", abs(NativePaths.channels(config.projectRef())), acceptJson(), null, true);
     requireOk(resp, 200);
     return readJson(resp, ClientChannelList.class);
   }
 
   public ClientMatrixList matrix() {
-    HttpResponse resp = send("GET", abs(NativePaths.matrix(config.projectRef())), jsonHeaders(), null, true);
+    HttpResponse resp = send("GET", abs(NativePaths.matrix(config.projectRef())), acceptJson(), null, true);
     requireOk(resp, 200);
     return readJson(resp, ClientMatrixList.class);
   }
 
   public ClientLanguageList languages() {
-    HttpResponse resp = send("GET", abs(NativePaths.languages(config.projectRef())), jsonHeaders(), null, true);
+    HttpResponse resp = send("GET", abs(NativePaths.languages(config.projectRef())), acceptJson(), null, true);
     requireOk(resp, 200);
     return readJson(resp, ClientLanguageList.class);
   }
@@ -272,7 +278,7 @@ public final class Client {
             q.arch,
             "locale",
             q.locale);
-    Map<String, String> headers = jsonHeaders();
+    Map<String, String> headers = acceptJson();
     if (q.acceptLanguage != null && !q.acceptLanguage.isBlank()) {
       headers.put("Accept-Language", q.acceptLanguage);
     }
@@ -355,9 +361,14 @@ public final class Client {
     headers.putIfAbsent("X-Project-Token", config.projectToken());
   }
 
-  private Map<String, String> jsonHeaders() {
+  private Map<String, String> acceptJson() {
     Map<String, String> h = new LinkedHashMap<>();
     h.put("Accept", "application/json");
+    return h;
+  }
+
+  private Map<String, String> jsonHeaders() {
+    Map<String, String> h = acceptJson();
     h.put("Content-Type", "application/json; charset=utf-8");
     return h;
   }
@@ -427,6 +438,16 @@ public final class Client {
 
   private static String bool(Boolean v) {
     return v == null ? null : Boolean.toString(v);
+  }
+
+  private static List<String> sanitizeAlgos(List<String> algos) {
+    List<String> out = new ArrayList<>();
+    for (String raw : algos) {
+      if (raw != null && !raw.isBlank()) {
+        out.add(raw.trim());
+      }
+    }
+    return out.isEmpty() ? null : out;
   }
 
   private static UpdateCheckRequest copyCheck(UpdateCheckRequest src) {

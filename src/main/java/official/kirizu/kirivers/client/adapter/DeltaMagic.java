@@ -22,6 +22,11 @@ public final class DeltaMagic {
   public static final String VCDIFF = "VCDIFF";
   public static final String UNKNOWN = "UNKNOWN";
 
+  /** Wire names used in {@code accepted_delta_algos} / {@code Patcher.supportedAlgos()}. */
+  public static final String ALGO_HDIFFPATCH = "hdiffpatch";
+  public static final String ALGO_BSDIFF = "bsdiff";
+  public static final String ALGO_XDELTA3 = "xdelta3";
+
   private static final byte[] MAGIC_KV = "KVDIFFHP1\n".getBytes(StandardCharsets.US_ASCII);
   private static final byte[] MAGIC_HDIFF = "HDIFF13&".getBytes(StandardCharsets.US_ASCII);
   private static final byte[] MAGIC_BSDIFF = "BSDIFF40".getBytes(StandardCharsets.US_ASCII);
@@ -46,10 +51,41 @@ public final class DeltaMagic {
   }
 
   public static void requireKnown(byte[] delta) throws IOException {
+    wireAlgo(delta);
+  }
+
+  /**
+   * Map container magic to the check/diff wire algorithm. Unknown prefixes must
+   * not be decoded as another engine.
+   */
+  public static String wireAlgo(byte[] delta) throws IOException {
     String kind = detect(delta);
-    if (UNKNOWN.equals(kind)) {
-      throw new IOException("unknown delta magic; refusing to cross-decode");
+    if (KVDIFFHP1.equals(kind) || HDIFF13.equals(kind)) {
+      return ALGO_HDIFFPATCH;
     }
+    if (BSDIFF40.equals(kind)) {
+      return ALGO_BSDIFF;
+    }
+    if (VCDIFF.equals(kind)) {
+      return ALGO_XDELTA3;
+    }
+    throw new IOException("unknown delta magic; refusing to cross-decode");
+  }
+
+  /**
+   * Refuse apply unless the live Patcher advertised the wire algo for this magic.
+   * Prevents a bsdiff-only Patcher from seeing HDIFF13/VCDIFF bytes.
+   */
+  public static void requireSupported(Iterable<String> supportedAlgos, byte[] delta) throws IOException {
+    String algo = wireAlgo(delta);
+    if (supportedAlgos != null) {
+      for (String raw : supportedAlgos) {
+        if (raw != null && algo.equalsIgnoreCase(raw.trim())) {
+          return;
+        }
+      }
+    }
+    throw new IOException("patcher does not support " + algo + "; refusing to cross-decode");
   }
 
   public static boolean isUnknown(byte[] delta) {
