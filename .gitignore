@@ -6,3 +6,8 @@ build/
 out/
 *.log
 local.properties
+# SDK release CI artifacts
+sdk-release-notes.md
+plan.json
+apply.json
+release.env
