@@ -39,9 +39,7 @@ class Updater {
   UpdateResult run(const UpdateRequest& req);
 
  private:
-  Bytes download_and_verify(const std::string& url, const std::string& expect_sha,
-                            const std::optional<std::string>& signature,
-                            const UpdateCheckBody* check);
+  Bytes download_and_verify(const std::string& url, const std::string& expect_sha);
   void maybe_verify_signature(const UpdateCheckBody& body);
   void write_stage(const std::string& path, const Bytes& data);
   void send_telemetry(const UpdateRequest& req, const std::string& to_version,

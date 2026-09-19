@@ -19,4 +19,7 @@ std::optional<std::string> normalize_rel_path(std::string_view raw,
 
 std::string to_lower_hex(const std::vector<unsigned char>& digest);
 
+// Case-insensitive hex compare (server SHA-256 is lowercase; hashers may differ).
+bool equal_hex(std::string_view a, std::string_view b);
+
 }  // namespace kirivers

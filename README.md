@@ -8,8 +8,11 @@ git clone -b sdk/cpp https://github.com/Kirizu-Official/KiriVers.git kirivers-cl
 ```
 
 This SDK does **not** one-click install a running application. Hosted builds
-can optionally use `MoveFileExW` on Windows if you attach a `Replacer`. Without
-a `Replacer`, `Updater` downloads and verifies to `stage_path` and returns.
+can optionally use `MoveFileExW` on Windows if you attach a `Replacer` (immediate
+replace only; a locked destination fails instead of scheduling a reboot).
+Without a `Replacer`, `Updater` downloads and verifies to `stage_path` and
+returns. When `ArchiveUnpacker` and `FileStore` are present and `install_dir`
+is set, a verified `patch_package` zip is also unpacked into `install_dir`.
 
 Docker is **not** an SDK runtime or publish dependency. `docker/Dockerfile.build`
 is only a one-off compile image for machines without CMake/libcurl.
@@ -35,6 +38,13 @@ Do not add cpp-httplib, cpr, RapidJSON, or a second HTTP/JSON stack.
 
 ```text
 sudo apt-get install cmake g++ pkg-config libcurl4-openssl-dev libssl-dev libzip-dev libutf8proc-dev
+```
+
+### Hosted packages (Windows / vcpkg)
+
+```text
+vcpkg install curl openssl libzip utf8proc
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%/scripts/buildsystems/vcpkg.cmake
 ```
 
 ### Build
@@ -120,7 +130,7 @@ cfg.replacer = std::make_shared<kirivers::MoveFileExReplacer>();
 | `FileStore` | `std::filesystem` + utf8proc NFC | Integrity compare / `file_list` |
 | `ArchiveUnpacker` | libzip | `patch_package` |
 | `Patcher` | **none** | `binary_delta` + `accepted_delta_algos` (hdiffpatch / bsdiff / xdelta3). Unknown magic is not cross-decoded; updater falls back to the full package. |
-| `Replacer` | **none** (optional `MoveFileExW`) | Apply/install. Android/HarmonyOS APK install is always caller-owned. |
+| `Replacer` | **none** (optional `MoveFileExW`; fails if the destination is locked) | Apply/install. Android/HarmonyOS APK install is always caller-owned. |
 
 ## Capability matrix (D13)
 

@@ -80,6 +80,10 @@ HttpResponse CurlTransport::execute(const HttpRequest& req) {
     std::string h = kv.first + ": " + kv.second;
     slist = curl_slist_append(slist, h.c_str());
   }
+  // REST JSON APIs (Gin) do not need Expect: 100-continue; it stalls POSTs.
+  if (auto* extra = curl_slist_append(slist, "Expect:")) {
+    slist = extra;
+  }
   if (slist) curl_easy_setopt(easy, CURLOPT_HTTPHEADER, slist);
 
   if (!req.body.empty()) {

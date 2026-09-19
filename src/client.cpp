@@ -167,6 +167,7 @@ CheckResult Client::check(const CheckInput& in, const CheckOptions& opt) {
   auto derived = declared_capabilities();
   std::vector<std::string> caps =
       in.capabilities ? *in.capabilities : derived.capabilities;
+  if (caps.empty()) caps.push_back("full_package");
   std::vector<std::string> algos = in.accepted_delta_algos
                                        ? *in.accepted_delta_algos
                                        : derived.accepted_delta_algos;
@@ -273,7 +274,10 @@ DiffBody Client::diff(const DiffInput& in) {
   put_opt(body, "local_sha256", in.local_sha256);
   if (in.prefer_full) body["prefer_full"] = *in.prefer_full;
   auto derived = declared_capabilities();
-  body["capabilities"] = in.capabilities ? *in.capabilities : derived.capabilities;
+  std::vector<std::string> caps =
+      in.capabilities ? *in.capabilities : derived.capabilities;
+  if (caps.empty()) caps.push_back("full_package");
+  body["capabilities"] = caps;
   auto algos = in.accepted_delta_algos ? *in.accepted_delta_algos
                                        : derived.accepted_delta_algos;
   if (!algos.empty()) body["accepted_delta_algos"] = algos;

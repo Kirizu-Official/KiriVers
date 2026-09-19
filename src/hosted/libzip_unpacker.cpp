@@ -33,8 +33,12 @@ void LibzipUnpacker::unpack_zip(
       const std::string& hex = kv.first;
       const std::string& rel = kv.second;
       zip_stat_t st;
+      zip_stat_init(&st);
       if (zip_stat(za, hex.c_str(), 0, &st) != 0) {
         throw std::runtime_error("zip member missing for " + hex);
+      }
+      if ((st.valid & ZIP_STAT_SIZE) == 0) {
+        throw std::runtime_error("zip member size unknown for " + hex);
       }
       zip_file_t* zf = zip_fopen(za, hex.c_str(), 0);
       if (!zf) throw std::runtime_error("zip_fopen failed");

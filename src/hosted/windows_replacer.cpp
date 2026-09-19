@@ -30,9 +30,8 @@ void MoveFileExReplacer::replace(const std::string& staged_path,
                                  const std::string& dest_path) {
   const std::wstring src = utf8_to_wide(staged_path);
   const std::wstring dst = utf8_to_wide(dest_path);
-  DWORD flags = MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED | MOVEFILE_WRITE_THROUGH;
-  if (MoveFileExW(src.c_str(), dst.c_str(), flags)) return;
-  flags = MOVEFILE_REPLACE_EXISTING | MOVEFILE_DELAY_UNTIL_REBOOT;
+  const DWORD flags =
+      MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED | MOVEFILE_WRITE_THROUGH;
   if (MoveFileExW(src.c_str(), dst.c_str(), flags)) return;
   throw std::runtime_error("MoveFileExW failed, last error " +
                            std::to_string(GetLastError()));

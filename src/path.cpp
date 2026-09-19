@@ -2,6 +2,7 @@
 #include <kirivers/adapters.hpp>
 
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <sstream>
@@ -88,10 +89,21 @@ std::string to_lower_hex(const std::vector<unsigned char>& digest) {
 }
 
 std::string FunctionHasher::sha256_file(const std::string& path) const {
-  std::ifstream in(path, std::ios::binary);
+  std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
   if (!in) throw std::runtime_error("cannot read file for hashing");
   Bytes data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
   return sha256_hex(data);
+}
+
+bool equal_hex(std::string_view a, std::string_view b) {
+  if (a.size() != b.size()) return false;
+  for (size_t i = 0; i < a.size(); ++i) {
+    if (std::tolower(static_cast<unsigned char>(a[i])) !=
+        std::tolower(static_cast<unsigned char>(b[i]))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 std::string build_check_payload(const std::string& version_integer,

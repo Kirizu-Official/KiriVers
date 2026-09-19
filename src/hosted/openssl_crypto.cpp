@@ -5,6 +5,7 @@
 #include <openssl/bio.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <stdexcept>
@@ -34,7 +35,7 @@ std::string digest_hex(const EVP_MD* md, const unsigned char* data, size_t n) {
 }
 
 std::string digest_file(const EVP_MD* md, const std::string& path) {
-  std::ifstream in(path, std::ios::binary);
+  std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
   if (!in) throw std::runtime_error("cannot open file for hashing");
   std::unique_ptr<EVP_MD_CTX, MdCtxFree> ctx(EVP_MD_CTX_new());
   if (!ctx || EVP_DigestInit_ex(ctx.get(), md, nullptr) != 1) {

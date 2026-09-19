@@ -86,6 +86,8 @@ int main() {
         REQUIRE(j.contains("os"));
         REQUIRE(j.contains("arch"));
         REQUIRE(j.contains("capabilities"));
+        REQUIRE(j["capabilities"] == nlohmann::json::array({"full_package"}));
+        REQUIRE(!j.contains("accepted_delta_algos"));
         REQUIRE(!j.contains("local_sha256"));
         REQUIRE(!j.contains("dirty_paths"));
         REQUIRE(!j.contains("changelog"));

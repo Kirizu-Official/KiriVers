@@ -1,10 +1,14 @@
 #include <kirivers/updater.hpp>
+#include <kirivers/path.hpp>
 
 #include "delta.hpp"
 
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace kirivers {
 
@@ -15,16 +19,40 @@ std::string int_or_empty(const std::optional<std::int64_t>& v) {
 }
 
 void write_bytes(const std::string& path, const Bytes& data) {
-  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  std::ofstream out(std::filesystem::u8path(path), std::ios::binary | std::ios::trunc);
   if (!out) throw std::runtime_error("cannot write staged file");
   out.write(reinterpret_cast<const char*>(data.data()),
             static_cast<std::streamsize>(data.size()));
 }
 
 Bytes read_bytes(const std::string& path) {
-  std::ifstream in(path, std::ios::binary);
+  std::ifstream in(std::filesystem::u8path(path), std::ios::binary);
   if (!in) throw std::runtime_error("cannot read staged file");
   return Bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+Bytes load_path(Client& client, const std::string& path) {
+  if (auto store = client.file_store()) return store->read_file(path);
+  return read_bytes(path);
+}
+
+std::string hash_path(Client& client, const std::string& path) {
+  auto hasher = client.hasher();
+  if (!hasher) throw ConfigError("Hasher is required");
+  if (auto store = client.file_store()) {
+    return hasher->sha256_hex(store->read_file(path));
+  }
+  return hasher->sha256_file(path);
+}
+
+using ZipMembers = std::vector<std::pair<std::string, std::string>>;
+
+void maybe_unpack(Client& client, const Bytes& zip, const std::string& dest_root,
+                  const ZipMembers& members) {
+  auto unpacker = client.archive_unpacker();
+  auto store = client.file_store();
+  if (!unpacker || !store || dest_root.empty() || members.empty()) return;
+  unpacker->unpack_zip(zip, *store, dest_root, members);
 }
 
 }  // namespace
@@ -50,13 +78,11 @@ void Updater::maybe_verify_signature(const UpdateCheckBody& body) {
   ver->verify(algo, cfg.public_key_pem, payload, *body.signature);
 }
 
-Bytes Updater::download_and_verify(const std::string& url, const std::string& expect_sha,
-                                   const std::optional<std::string>& /*signature*/,
-                                   const UpdateCheckBody* /*check*/) {
+Bytes Updater::download_and_verify(const std::string& url, const std::string& expect_sha) {
   Bytes data = client_.download(url);
   if (auto hasher = client_.hasher()) {
     const std::string got = hasher->sha256_hex(data);
-    if (!expect_sha.empty() && got != expect_sha) {
+    if (!expect_sha.empty() && !equal_hex(got, expect_sha)) {
       throw ApiError(0, "SHA256_MISMATCH", "downloaded bytes do not match sha256");
     }
   } else if (!expect_sha.empty()) {
@@ -131,6 +157,7 @@ UpdateResult Updater::run(const UpdateRequest& req) {
   std::string diff_mode = "full_package";
   std::string expect_sha = body.sha256;
   std::string download_url = body.package_url;
+  ZipMembers unpack_map;
 
   try {
     const bool can_delta = client_.patcher() && body.delta_available &&
@@ -145,7 +172,10 @@ UpdateResult Updater::run(const UpdateRequest& req) {
       din.device_id = req.device_id;
       din.hw_rev = req.hw_rev;
       if (!req.install_dir.empty()) {
-        din.local_sha256 = client_.hasher()->sha256_file(req.install_dir);
+        try {
+          din.local_sha256 = hash_path(client_, req.install_dir);
+        } catch (...) {
+        }
       }
       auto d = client_.diff(din);
       if (d.diff_mode == "binary_delta" && d.package_url && d.sha256 && d.delta_algo) {
@@ -158,10 +188,10 @@ UpdateResult Updater::run(const UpdateRequest& req) {
                            "delta magic does not match delta_algo");
           }
           Bytes old_bytes;
-          if (!req.install_dir.empty()) old_bytes = read_bytes(req.install_dir);
+          if (!req.install_dir.empty()) old_bytes = load_path(client_, req.install_dir);
           Bytes patched = client_.patcher()->apply(old_bytes, delta, *d.delta_algo);
           const std::string got = client_.hasher()->sha256_hex(patched);
-          if (got != body.sha256) {
+          if (!equal_hex(got, body.sha256)) {
             throw ApiError(0, "SHA256_MISMATCH", "patched bytes do not match target");
           }
           staged = std::move(patched);
@@ -170,12 +200,19 @@ UpdateResult Updater::run(const UpdateRequest& req) {
         } catch (...) {
           staged.clear();
           diff_mode = "full_package";
+          download_url = body.package_url;
+          expect_sha = body.sha256;
         }
       } else if (d.diff_mode == "patch_package" && d.package_url &&
                  client_.archive_unpacker()) {
         download_url = *d.package_url;
         if (d.sha256) expect_sha = *d.sha256;
         diff_mode = "patch_package";
+        for (const auto& f : d.files) {
+          if (f.sha256 && f.path && !f.sha256->empty() && !f.path->empty()) {
+            unpack_map.emplace_back(*f.sha256, *f.path);
+          }
+        }
       }
     }
 
@@ -207,7 +244,7 @@ UpdateResult Updater::run(const UpdateRequest& req) {
         const std::string local = req.install_dir + "/" + rel;
         if (keep && f.sha256 && store->exists(local)) {
           try {
-            if (client_.hasher()->sha256_file(local) == *f.sha256) continue;
+            if (equal_hex(hash_path(client_, local), *f.sha256)) continue;
           } catch (...) {
           }
         }
@@ -218,15 +255,31 @@ UpdateResult Updater::run(const UpdateRequest& req) {
         download_url = *packed.package_url;
         if (packed.sha256) expect_sha = *packed.sha256;
         diff_mode = packed.diff_mode.value_or("patch_package");
+        unpack_map.clear();
+        for (const auto& f : packed.files) {
+          if (!f.sha256 || !f.path || f.sha256->empty() || f.path->empty()) continue;
+          try {
+            unpack_map.emplace_back(*f.sha256, store->normalize_path(*f.path));
+          } catch (...) {
+          }
+        }
       } else {
         download_url = body.package_url;
         expect_sha = body.sha256;
         diff_mode = "full_package";
+        unpack_map.clear();
       }
     }
 
     if (staged.empty()) {
-      staged = download_and_verify(download_url, expect_sha, body.signature, &body);
+      staged = download_and_verify(download_url, expect_sha);
+      if (diff_mode == "patch_package") {
+        try {
+          maybe_unpack(client_, staged, req.install_dir, unpack_map);
+        } catch (...) {
+          // Zip already verified; unpack is best-effort (R4 stages the package).
+        }
+      }
     }
   } catch (const std::exception& ex) {
     send_telemetry(req, to_ver, "failed", diff_mode, "UPDATE_FAILED", ex.what());

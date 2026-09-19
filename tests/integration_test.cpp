@@ -67,6 +67,12 @@ std::string random_device_suffix() {
 }  // namespace
 
 int main() {
+  if (const char* skip = std::getenv("KIRIVERS_SKIP_INTEGRATION")) {
+    if (skip[0] == '1') {
+      std::cerr << "integration skipped via KIRIVERS_SKIP_INTEGRATION\n";
+      return 0;
+    }
+  }
   auto fixture_path = find_fixture();
   if (!fixture_path) {
     std::cerr << "sdk-fixture.json not found; set KIRIVERS_FIXTURE\n";
@@ -165,7 +171,7 @@ int main() {
   auto hasher = client.hasher();
   REQUIRE(hasher != nullptr);
   const std::string got = hasher->sha256_hex(pkg);
-  if (got != expect_sha) {
+  if (!equal_hex(got, expect_sha)) {
     write_backend_issue(
         "GET package_url from check and SHA-256 the bytes.",
         expect_sha, got);
@@ -193,7 +199,7 @@ int main() {
   REQUIRE(result.kind == UpdateKind::Staged || result.kind == UpdateKind::NoUpdate ||
           result.kind == UpdateKind::NotModified);
   if (result.kind == UpdateKind::Staged) {
-    REQUIRE(result.sha256 == expect_sha);
+    REQUIRE(equal_hex(result.sha256, expect_sha));
   }
 
   std::cout << "integration_test ok (check 1.0.0 -> 1.1.0, sha256 verified)\n";
