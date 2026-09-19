@@ -16,3 +16,8 @@ htmlcov/
 *.bin
 .idea/
 .vscode/
+# SDK release CI artifacts
+sdk-release-notes.md
+plan.json
+apply.json
+release.env

@@ -1,0 +1,30 @@
+name: ci
+on:
+  pull_request:
+    branches: [sdk/python]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      SDK_LANG: python
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Conventional Commits
+        run: |
+          python3 scripts/sdk_release.py commitlint \
+            --pr-title "${{ github.event.pull_request.title }}" \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 scripts/sdk_release.py self-check
+      - run: pip install -e ".[dev]"
+      - run: pytest
