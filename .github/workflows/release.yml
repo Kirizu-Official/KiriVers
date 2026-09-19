@@ -1,0 +1,76 @@
+name: release
+on:
+  push:
+    branches: [sdk/dart]
+    tags-ignore:
+      - "**"
+concurrency:
+  group: release-dart-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: write
+  id-token: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      SDK_LANG: dart
+      SDK_PUBLISH: ${{ vars.SDK_PUBLISH }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: dart-lang/setup-dart@v1
+      - run: python3 scripts/sdk_release.py self-check
+      - run: dart pub get && dart test
+      - name: Plan release
+        id: rel
+        run: |
+          python3 scripts/sdk_release.py plan | tee plan.json
+          echo "action=$(jq -r .action plan.json)" >> "$GITHUB_OUTPUT"
+          echo "tag=$(jq -r .tag plan.json)" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -r .version plan.json)" >> "$GITHUB_OUTPUT"
+      - name: Skip
+        if: steps.rel.outputs.action == 'skip'
+        run: jq -r .reason plan.json
+      - name: Require registry secrets
+        if: steps.rel.outputs.action != 'skip'
+        env:
+          PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}
+        run: |
+          if [ -z "$PUB_CREDENTIALS" ]; then echo "missing secret PUB_CREDENTIALS"; exit 1; fi
+      - name: Apply version, tag, push, GitHub Release
+        if: steps.rel.outputs.action != 'skip'
+        run: |
+          set -euo pipefail
+          python3 scripts/sdk_release.py apply | tee apply.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          ACTION=$(jq -r .action apply.json)
+          VERSION=$(jq -r .version apply.json)
+          TAG=$(jq -r .tag apply.json)
+          BRANCH="${{ github.ref_name }}"
+          if [ "$ACTION" = bump ]; then
+            git add -u
+            git restore --staged sdk-release-notes.md 2>/dev/null || true
+            git status
+            git diff --cached --quiet || git commit -m "chore(release): $VERSION"
+          fi
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "HEAD:$BRANCH" --follow-tags
+          gh release create "$TAG" --title "$TAG" --notes-file sdk-release-notes.md --target "$BRANCH"
+
+      - name: Publish pub.dev
+        if: steps.rel.outputs.action != 'skip'
+        env:
+          PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}
+        run: |
+          set -e
+          if [ -z "$PUB_CREDENTIALS" ]; then echo "missing secret PUB_CREDENTIALS"; exit 1; fi
+          PUB_CACHE="${PUB_CACHE:-$HOME/.pub-cache}"
+          mkdir -p "$PUB_CACHE"
+          printf '%s' "$PUB_CREDENTIALS" > "$PUB_CACHE/credentials.json"
+          dart pub publish --force
