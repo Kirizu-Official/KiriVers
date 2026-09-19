@@ -5,8 +5,11 @@ import 'capabilities.dart';
 import 'client.dart';
 import 'delta.dart';
 import 'errors.dart';
+import 'file_store.dart';
 import 'models.dart';
 import 'pathutil.dart';
+import 'replacer.dart';
+import 'unpacker.dart';
 
 /// Caller identity and apply options. The SDK does not invent [deviceId].
 class UpdatePlan {
@@ -18,6 +21,7 @@ class UpdatePlan {
     this.deviceId,
     this.osVersion,
     this.hwRev,
+    this.custom,
     this.ifNoneMatch,
     this.reportDevice = false,
     this.apply = true,
@@ -36,6 +40,7 @@ class UpdatePlan {
   final String? deviceId;
   final String? osVersion;
   final String? hwRev;
+  final Map<String, dynamic>? custom;
   final String? ifNoneMatch;
   final bool reportDevice;
   final bool apply;
@@ -72,10 +77,48 @@ class UpdateResult {
 /// Missing [Replacer] is not a failure: verified bytes/path are returned.
 /// Telemetry errors never fail the result. Unknown delta magic falls back to
 /// the full package (never cross-decoded).
+///
+/// Default adapters: zip [ArchiveUnpacker] (`patch_package`) and
+/// [FileRenameReplacer]. [FileStore] comes from the client, an injected store,
+/// or `fileRoot` / [UpdatePlan.stageDir]; without a writable store the updater
+/// does not advertise `file_list`. [Patcher] stays injected.
 class Updater {
-  Updater({required this.client});
+  Updater({
+    required this.client,
+    FileStore? fileStore,
+    ArchiveUnpacker? archiveUnpacker,
+    Replacer? replacer,
+    Patcher? patcher,
+    this.includeDefaultArchiveUnpacker = true,
+    this.includeDefaultReplacer = true,
+  })  : fileStore = fileStore ??
+            client.fileStore ??
+            _fileStoreFromRoot(client.config.fileRoot),
+        archiveUnpacker = archiveUnpacker ??
+            client.archiveUnpacker ??
+            (includeDefaultArchiveUnpacker ? const ZipArchiveUnpacker() : null),
+        replacer = replacer ??
+            client.replacer ??
+            (includeDefaultReplacer ? const FileRenameReplacer() : null),
+        patcher = patcher ?? client.patcher;
 
   final Client client;
+  final FileStore? fileStore;
+  final ArchiveUnpacker? archiveUnpacker;
+  final Replacer? replacer;
+  final Patcher? patcher;
+  final bool includeDefaultArchiveUnpacker;
+  final bool includeDefaultReplacer;
+
+  List<String> derivedCapabilities() {
+    return deriveCapabilities(
+      unpacker: archiveUnpacker,
+      fileStore: fileStore,
+      patcher: patcher,
+    );
+  }
+
+  List<String> derivedDeltaAlgos() => deriveDeltaAlgos(patcher);
 
   Future<UpdateResult> run(UpdatePlan plan) async {
     final channel = plan.channel ?? 'stable';
@@ -89,6 +132,7 @@ class Updater {
           arch: plan.arch,
           channel: channel,
           version: plan.currentVersion,
+          custom: plan.custom,
         ),
       );
     }
@@ -102,6 +146,8 @@ class Updater {
         hwRev: plan.hwRev,
         osVersion: plan.osVersion,
         deviceId: plan.deviceId,
+        capabilities: derivedCapabilities(),
+        acceptedDeltaAlgos: derivedDeltaAlgos(),
       ),
       ifNoneMatch: plan.ifNoneMatch,
     );
@@ -127,11 +173,11 @@ class Updater {
       final staged = await _stage(plan, body, bytes);
       var applied = false;
       if (plan.apply &&
-          client.replacer != null &&
+          replacer != null &&
           plan.installPath != null &&
           staged != null) {
         await _telemetry(plan, body, telemetryApplying, mode);
-        await client.replacer!.replace(
+        await replacer!.replace(
           stagedPath: staged,
           installPath: plan.installPath!,
         );
@@ -164,7 +210,7 @@ class Updater {
     _lastMode = capabilityFullPackage;
 
     if (body.packageType == 'single_file' &&
-        client.patcher != null &&
+        patcher != null &&
         body.deltaAvailable &&
         !body.isDowngrade) {
       try {
@@ -178,7 +224,7 @@ class Updater {
       }
     }
 
-    if (body.packageType == 'multi_file' && client.fileStore != null) {
+    if (body.packageType == 'multi_file' && fileStore != null) {
       try {
         final packed = await _tryPack(plan, body);
         if (packed != null) {
@@ -212,6 +258,8 @@ class Updater {
         deviceId: plan.deviceId,
         hwRev: plan.hwRev,
         localSha256: local,
+        capabilities: derivedCapabilities(),
+        acceptedDeltaAlgos: derivedDeltaAlgos(),
       ),
     );
     if (diff.diffMode != capabilityBinaryDelta ||
@@ -231,7 +279,7 @@ class Updater {
       throw PatchException('missing delta_algo');
     }
     DeltaMagic.rejectUnknownOrMismatch(delta.bytes, algo);
-    return client.patcher!.apply(
+    return patcher!.apply(
       oldBytes: oldBytes,
       delta: delta.bytes,
       algo: algo,
@@ -278,8 +326,8 @@ class Updater {
         throw HashMismatchException(expected: pack.sha256!, actual: hex);
       }
     }
-    final unpacker = client.archiveUnpacker;
-    final store = client.fileStore;
+    final unpacker = archiveUnpacker;
+    final store = fileStore;
     if (unpacker != null && store != null) {
       final files = pack.files.isNotEmpty ? pack.files : manifest.files;
       final unpacked = await unpacker.unpackZip(
@@ -297,7 +345,7 @@ class Updater {
   }
 
   Future<List<String>> _neededPaths(IntegrityManifest manifest) async {
-    final store = client.fileStore!;
+    final store = fileStore!;
     final needed = <String>[];
     for (final file in manifest.files) {
       late final String path;
@@ -325,8 +373,8 @@ class Updater {
     if (plan.localSha256 != null && plan.localSha256!.isNotEmpty) {
       return plan.localSha256!.toLowerCase();
     }
-    if (plan.localRelativePath != null && client.fileStore != null) {
-      return client.fileStore!.sha256Hex(plan.localRelativePath!);
+    if (plan.localRelativePath != null && fileStore != null) {
+      return fileStore!.sha256Hex(plan.localRelativePath!);
     }
     final bytes = await _oldBytes(plan);
     if (bytes == null) {
@@ -336,8 +384,8 @@ class Updater {
   }
 
   Future<List<int>?> _oldBytes(UpdatePlan plan) async {
-    if (plan.localRelativePath != null && client.fileStore != null) {
-      return client.fileStore!.read(plan.localRelativePath!);
+    if (plan.localRelativePath != null && fileStore != null) {
+      return fileStore!.read(plan.localRelativePath!);
     }
     if (plan.localFilePath != null) {
       final file = File(plan.localFilePath!);
@@ -454,5 +502,12 @@ class Updater {
     } catch (_) {
       // Telemetry must never block apply.
     }
+  }
+
+  static FileStore? _fileStoreFromRoot(String? root) {
+    if (root == null || root.isEmpty) {
+      return null;
+    }
+    return IoFileStore(root: root);
   }
 }

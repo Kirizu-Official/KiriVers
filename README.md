@@ -79,10 +79,14 @@ final result = await updater.run(
 );
 ```
 
-Default `Replacer` is **`File.rename`** for app-level files (copy+delete if the
-rename crosses volumes). That is **not** one-click install: Android / HarmonyOS
-APK sideload, Windows lock-file helpers, and installer relaunch are caller
-`Replacer` implementations.
+`Client.check()` sends `capabilities: ["full_package"]` only. `Updater.run()`
+adds `patch_package` because it ships a default zip unpacker; `file_list` only
+when a writable `FileStore` is attached (`IoFileStore` / `fileRoot`).
+
+Default `Replacer` on **Updater** is **`File.rename`** for app-level files
+(copy+delete if the rename crosses volumes). That is **not** one-click install:
+Android / HarmonyOS APK sideload, Windows lock-file helpers, and installer
+relaunch are caller `Replacer` implementations.
 
 ## Native JSON API (`Client`)
 
@@ -120,23 +124,23 @@ Errors parse `{ "error": { "code", "message", "details" } }`.
 | **JSON** | `dart:convert` (not an adapter) | — |
 | **Hasher** | `package:crypto` (SHA-256 + MD5) | Swap hash implementation |
 | **SignatureVerifier** | `package:cryptography` (Ed25519, RSA-SHA256) | Swap verify; payload is `integer\\nsemver\\nroot_hash\\npackage_url\\nsize\\nsha256` |
-| **FileStore** | `dart:io` + `unorm_dart` NFC (`IoFileStore`) | Integrity compare / `file_list` on a custom tree |
-| **ArchiveUnpacker** | `package:archive` zip (`ZipArchiveUnpacker`) | Advertise / apply `patch_package` with another unzip |
-| **Replacer** | `File.rename` (`FileRenameReplacer`) | APK install, occupied-file replace, flash |
+| **FileStore** | `dart:io` + `unorm_dart` NFC (`IoFileStore`) when `fileRoot` is set | Integrity compare / `file_list` on a custom tree |
+| **ArchiveUnpacker** | `package:archive` zip on **Updater** (`ZipArchiveUnpacker`) | Advertise / apply `patch_package` with another unzip |
+| **Replacer** | `File.rename` on **Updater** (`FileRenameReplacer`) | APK install, occupied-file replace, flash |
 | **Patcher** | **interface only** | Advertise `binary_delta` and apply `hdiffpatch` / `bsdiff` / `xdelta3` |
 
 Hosted runtime dependencies are exactly: `http`, `crypto`, `archive`,
 `cryptography`, `unorm_dart`. No second HTTP or JSON stack. No `dart:ffi`
 delta engine, no bundled `hpatchz`.
 
-Check `capabilities` follow **attached** adapters:
+Check `capabilities` follow **attached** adapters (D13):
 
 | Present | Sent on check |
 |---------|----------------|
-| Transport | `full_package` |
-| + ArchiveUnpacker | `patch_package` |
+| `Client.check` (Transport only) | `full_package` |
+| + ArchiveUnpacker (Updater default zip) | `patch_package` |
 | + FileStore that can write files | `file_list` |
-| + Patcher with `supportedAlgos` | `binary_delta` + `accepted_delta_algos` |
+| + Patcher with non-empty `supportedAlgos` | `binary_delta` + `accepted_delta_algos` |
 
 Without a `Patcher`, this SDK **does not** send `binary_delta`. Injecting a
 Patcher that claims `bsdiff` / `xdelta3` / `hdiffpatch` is what turns that on.

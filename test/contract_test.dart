@@ -163,6 +163,9 @@ void main() {
     for (final name in schemaRequired('UpdateCheckRequest')) {
       expect(checkBody.containsKey(name), isTrue, reason: name);
     }
+    expect(checkBody['capabilities'], ['full_package']);
+    expect(checkBody.containsKey('accepted_delta_algos'), isFalse);
+    expect(checkBody.containsKey('local_sha256'), isFalse);
 
     final reportReq = rec.requests.firstWhere(
       (r) => r.url.path.endsWith('/clients/report'),

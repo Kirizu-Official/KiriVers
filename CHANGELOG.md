@@ -9,5 +9,7 @@
   optional `File.rename` replace).
 - Default adapters: `package:http`, `dart:convert`, `package:crypto`,
   `package:archive`, `package:cryptography`, `unorm_dart`, `File.rename`.
+- `Client.check` sends `capabilities: ["full_package"]` only. `Updater` adds
+  `patch_package` (default zip); `file_list` only with a writable `FileStore`.
 - `Patcher` is an injected interface; the SDK does not bundle FFI delta
   engines and does not advertise `binary_delta` unless a Patcher is provided.

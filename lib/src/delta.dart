@@ -29,7 +29,7 @@ class DeltaMagic {
       return null;
     }
     final head = utf8.decode(delta.sublist(0, n), allowMalformed: true);
-    if (head.startsWith('KVDIFFHP1')) {
+    if (head.startsWith(kvdiffhp1) || head.startsWith('KVDIFFHP1')) {
       return algoHdiffpatch;
     }
     if (head.startsWith(hdiff13)) {

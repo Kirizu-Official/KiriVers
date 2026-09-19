@@ -139,8 +139,15 @@ class CheckRequest {
     List<String>? defaultCapabilities,
     List<String>? defaultDeltaAlgos,
   }) {
-    final caps = capabilities ?? defaultCapabilities ?? const ['full_package'];
-    final algos = acceptedDeltaAlgos ?? defaultDeltaAlgos ?? const <String>[];
+    var caps = capabilities ?? defaultCapabilities;
+    if (caps == null || caps.isEmpty) {
+      caps = const ['full_package'];
+    }
+    final algos = [
+      for (final algo
+          in acceptedDeltaAlgos ?? defaultDeltaAlgos ?? const <String>[])
+        if (algo.trim().isNotEmpty) algo.trim(),
+    ];
     final out = <String, dynamic>{
       'current_version': currentVersion,
       'os': os,
@@ -442,10 +449,8 @@ class IntegrityManifest {
       fileName: asString(json['file_name']),
       size: asInt(json['size']) ?? 0,
       sha256: asString(json['sha256']).toLowerCase(),
-      files: asList(json['files'])
-          .map(asMap)
-          .map(IntegrityFile.fromJson)
-          .toList(),
+      files:
+          asList(json['files']).map(asMap).map(IntegrityFile.fromJson).toList(),
       signature: asStringOrNull(json['signature']),
       etag: etag,
     );
@@ -536,8 +541,12 @@ class DiffRequest {
     if (caps != null && caps.isNotEmpty) {
       out['capabilities'] = caps;
     }
-    final algos = acceptedDeltaAlgos ?? defaultDeltaAlgos;
-    if (algos != null && algos.isNotEmpty) {
+    final algos = [
+      for (final algo
+          in acceptedDeltaAlgos ?? defaultDeltaAlgos ?? const <String>[])
+        if (algo.trim().isNotEmpty) algo.trim(),
+    ];
+    if (algos.isNotEmpty) {
       out['accepted_delta_algos'] = algos;
     }
     if (preferFull != null) {
@@ -624,10 +633,7 @@ class DiffResult {
       fileName: asStringOrNull(json['file_name']),
       deltaAlgo: asStringOrNull(json['delta_algo']),
       signature: asStringOrNull(json['signature']),
-      files: asList(json['files'])
-          .map(asMap)
-          .map(DiffFile.fromJson)
-          .toList(),
+      files: asList(json['files']).map(asMap).map(DiffFile.fromJson).toList(),
       deletedPaths:
           asList(json['deleted_paths']).map((e) => e.toString()).toList(),
       invalidPaths:
@@ -734,10 +740,8 @@ class PackResult {
       signature: asStringOrNull(json['signature']),
       versionInteger: asInt(json['version_integer']),
       versionSemver: asStringOrNull(json['version_semver']),
-      files: asList(json['files'])
-          .map(asMap)
-          .map(IntegrityFile.fromJson)
-          .toList(),
+      files:
+          asList(json['files']).map(asMap).map(IntegrityFile.fromJson).toList(),
       deletedPaths:
           asList(json['deleted_paths']).map((e) => e.toString()).toList(),
       invalidPaths:

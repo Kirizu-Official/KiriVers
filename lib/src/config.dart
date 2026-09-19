@@ -32,7 +32,7 @@ class ClientConfig {
   /// `ed25519` or `rsa-sha256`. Empty tries Ed25519 then RSA.
   final String? signingAlgo;
 
-  /// Root for the default dart:io [IoFileStore].
+  /// Root for the default dart:io [IoFileStore] when a writable store is used.
   final String? fileRoot;
 
   final Duration requestTimeout;

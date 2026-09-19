@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'adapters.dart';
 import 'capabilities.dart';
@@ -19,8 +18,9 @@ typedef SleepFn = Future<void> Function(Duration duration);
 
 /// Handwritten native JSON client. No OpenAPI codegen.
 ///
-/// Default check capabilities follow attached adapters (D13). HTTP 204 is
-/// "no update", not an error. 304 is an ETag hit.
+/// Default check capabilities are `["full_package"]` only (D13). HTTP 204 is
+/// "no update", not an error. 304 is an ETag hit. Attach adapters (or use
+/// `Updater`) before advertising `patch_package` / `file_list` / `binary_delta`.
 class Client {
   Client({
     required this.config,
@@ -31,18 +31,19 @@ class Client {
     ArchiveUnpacker? archiveUnpacker,
     this.patcher,
     Replacer? replacer,
-    this.includeDefaultFileStore = true,
-    this.includeDefaultArchiveUnpacker = true,
-    this.includeDefaultReplacer = true,
+    this.includeDefaultFileStore = false,
+    this.includeDefaultArchiveUnpacker = false,
+    this.includeDefaultReplacer = false,
     SleepFn? sleep,
   })  : transport = transport ?? HttpTransport(timeout: config.requestTimeout),
         hasher = hasher ?? const CryptoHasher(),
         signatureVerifier =
             signatureVerifier ?? CryptographySignatureVerifier(),
         _sleep = sleep ?? ((Duration d) => Future<void>.delayed(d)) {
+    final root = config.fileRoot;
     this.fileStore = fileStore ??
-        (includeDefaultFileStore
-            ? IoFileStore(root: config.fileRoot ?? Directory.systemTemp.path)
+        (includeDefaultFileStore && root != null && root.isNotEmpty
+            ? IoFileStore(root: root)
             : null);
     this.archiveUnpacker = archiveUnpacker ??
         (includeDefaultArchiveUnpacker ? const ZipArchiveUnpacker() : null);
@@ -64,27 +65,18 @@ class Client {
   final SleepFn _sleep;
 
   /// D13: `full_package` plus patch/file_list/delta only when adapters exist.
+  ///
+  /// `check` does **not** send these automatically — pass them on the request
+  /// (as `Updater` does) or the body stays `["full_package"]`.
   List<String> derivedCapabilities() {
-    final caps = <String>[capabilityFullPackage];
-    if (archiveUnpacker != null) {
-      caps.add(capabilityPatchPackage);
-    }
-    if (fileStore != null && fileStore!.canWriteFiles) {
-      caps.add(capabilityFileList);
-    }
-    if (patcher != null && patcher!.supportedAlgos.isNotEmpty) {
-      caps.add(capabilityBinaryDelta);
-    }
-    return caps;
+    return deriveCapabilities(
+      unpacker: archiveUnpacker,
+      fileStore: fileStore,
+      patcher: patcher,
+    );
   }
 
-  List<String> derivedDeltaAlgos() {
-    final p = patcher;
-    if (p == null || p.supportedAlgos.isEmpty) {
-      return const [];
-    }
-    return List<String>.from(p.supportedAlgos);
-  }
+  List<String> derivedDeltaAlgos() => deriveDeltaAlgos(patcher);
 
   Future<HealthStatus> health() async {
     final res = await _send(
@@ -125,10 +117,7 @@ class Client {
     final res = await _send(
       method: 'POST',
       uri: _uri(_project('/update/check')),
-      jsonBody: request.toJson(
-        defaultCapabilities: derivedCapabilities(),
-        defaultDeltaAlgos: derivedDeltaAlgos(),
-      ),
+      jsonBody: request.toJson(),
       extraHeaders: headers,
     );
     _ensureOk(res, const {200, 204, 304});
@@ -207,10 +196,7 @@ class Client {
     final res = await _send(
       method: 'POST',
       uri: _uri(_project('/update/diff')),
-      jsonBody: request.toJson(
-        defaultCapabilities: derivedCapabilities(),
-        defaultDeltaAlgos: derivedDeltaAlgos(),
-      ),
+      jsonBody: request.toJson(),
     );
     _ensureOk(res, const {200});
     return DiffResult.fromJson(_mustMap(res.body));

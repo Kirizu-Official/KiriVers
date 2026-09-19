@@ -6,62 +6,139 @@ import 'package:test/test.dart';
 import 'support.dart';
 
 void main() {
-  test('default capabilities omit binary_delta without Patcher', () async {
-    final rec = RecordingTransport((req) {
-      return jsonOk(check200());
-    });
-    final client = testClient(
-      transport: rec,
-      defaultFileStore: true,
-      defaultUnpacker: true,
-      fileStore: MemoryFileStore(),
-      unpacker: const ZipArchiveUnpacker(),
-    );
-    expect(client.derivedCapabilities(), [
-      capabilityFullPackage,
-      capabilityPatchPackage,
-      capabilityFileList,
-    ]);
+  test('default Client.check sends only full_package', () async {
+    final rec = RecordingTransport((req) => jsonOk(check200()));
+    final client = testClient(transport: rec);
+    expect(client.derivedCapabilities(), [capabilityFullPackage]);
     expect(client.derivedDeltaAlgos(), isEmpty);
     await client.check(
       CheckRequest(currentVersion: '1.0.0', os: 'windows', arch: 'x86_64'),
     );
     final body = jsonBody(rec.requests.single);
-    expect(body['capabilities'], contains(capabilityFullPackage));
-    expect(body['capabilities'], contains(capabilityPatchPackage));
-    expect(body['capabilities'], contains(capabilityFileList));
-    expect(body['capabilities'], isNot(contains(capabilityBinaryDelta)));
+    expect(body['capabilities'], [capabilityFullPackage]);
     expect(body.containsKey('accepted_delta_algos'), isFalse);
     expect(body.containsKey('local_sha256'), isFalse);
     expect(body.containsKey('dirty_paths'), isFalse);
   });
 
-  test('injected Patcher advertises binary_delta and algos', () async {
+  test('Client.check ignores attached adapters unless capabilities are passed',
+      () async {
     final rec = RecordingTransport((req) => jsonOk(check200()));
     final client = testClient(
       transport: rec,
-      patcher: FakePatcher(algos: ['bsdiff', 'xdelta3']),
+      fileStore: MemoryFileStore(),
+      unpacker: const ZipArchiveUnpacker(),
+      patcher: FakePatcher(algos: ['bsdiff']),
     );
     expect(client.derivedCapabilities(), [
       capabilityFullPackage,
+      capabilityPatchPackage,
+      capabilityFileList,
       capabilityBinaryDelta,
     ]);
     await client.check(
       CheckRequest(currentVersion: '1.0.0', os: 'windows', arch: 'x86_64'),
+    );
+    expect(jsonBody(rec.requests.single)['capabilities'], ['full_package']);
+    expect(
+      jsonBody(rec.requests.single).containsKey('accepted_delta_algos'),
+      isFalse,
+    );
+  });
+
+  test('empty capabilities list still sends full_package', () async {
+    final rec = RecordingTransport((req) => jsonOk(check200()));
+    final client = testClient(transport: rec);
+    await client.check(
+      CheckRequest(
+        currentVersion: '1.0.0',
+        os: 'windows',
+        arch: 'x86_64',
+        capabilities: const [],
+      ),
+    );
+    expect(jsonBody(rec.requests.single)['capabilities'], ['full_package']);
+  });
+
+  test('FileStore plus unpacker justify patch_package and file_list', () {
+    expect(
+      deriveCapabilities(
+        unpacker: const ZipArchiveUnpacker(),
+        fileStore: MemoryFileStore(),
+      ),
+      [
+        capabilityFullPackage,
+        capabilityPatchPackage,
+        capabilityFileList,
+      ],
+    );
+    expect(
+      deriveCapabilities(unpacker: const ZipArchiveUnpacker()),
+      [capabilityFullPackage, capabilityPatchPackage],
+    );
+  });
+
+  test('Updater zip default advertises patch_package, not binary_delta',
+      () async {
+    final rec = RecordingTransport((req) => empty(204));
+    final updater = Updater(client: testClient(transport: rec));
+    expect(updater.derivedCapabilities(), [
+      capabilityFullPackage,
+      capabilityPatchPackage,
+    ]);
+    expect(updater.derivedDeltaAlgos(), isEmpty);
+    await updater.run(
+      UpdatePlan(currentVersion: '1.0.0', os: 'windows', arch: 'x86_64'),
+    );
+    final body = jsonBody(rec.requests.single);
+    expect(body['capabilities'], contains(capabilityFullPackage));
+    expect(body['capabilities'], contains(capabilityPatchPackage));
+    expect(body['capabilities'], isNot(contains(capabilityBinaryDelta)));
+    expect(body['capabilities'], isNot(contains(capabilityFileList)));
+    expect(body.containsKey('accepted_delta_algos'), isFalse);
+  });
+
+  test('injected Patcher advertises binary_delta and algos', () async {
+    final rec = RecordingTransport((req) => empty(204));
+    final updater = Updater(
+      client: testClient(transport: rec),
+      patcher: FakePatcher(algos: ['bsdiff', 'xdelta3']),
+      includeDefaultArchiveUnpacker: false,
+    );
+    expect(updater.derivedCapabilities(), [
+      capabilityFullPackage,
+      capabilityBinaryDelta,
+    ]);
+    await updater.run(
+      UpdatePlan(currentVersion: '1.0.0', os: 'windows', arch: 'x86_64'),
     );
     final body = jsonBody(rec.requests.single);
     expect(body['capabilities'], contains(capabilityBinaryDelta));
     expect(body['accepted_delta_algos'], ['bsdiff', 'xdelta3']);
   });
 
-  test('without FileStore or unpacker only full_package is sent', () async {
-    final rec = RecordingTransport((req) => jsonOk(check200()));
-    final client = testClient(transport: rec);
-    expect(client.derivedCapabilities(), [capabilityFullPackage]);
-    await client.check(
-      CheckRequest(currentVersion: '1.0.0', os: 'linux', arch: 'arm64'),
+  test('blank Patcher algos do not advertise binary_delta', () {
+    expect(
+      deriveCapabilities(patcher: FakePatcher(algos: ['', '  '])),
+      [capabilityFullPackage],
     );
-    expect(jsonBody(rec.requests.single)['capabilities'], ['full_package']);
+    expect(deriveDeltaAlgos(FakePatcher(algos: ['', '  '])), isEmpty);
+  });
+
+  test('writable FileStore on Updater advertises file_list', () async {
+    final rec = RecordingTransport((req) => empty(204));
+    final updater = Updater(
+      client: testClient(transport: rec),
+      fileStore: MemoryFileStore(),
+      includeDefaultArchiveUnpacker: false,
+    );
+    await updater.run(
+      UpdatePlan(currentVersion: '1.0.0', os: 'linux', arch: 'arm64'),
+    );
+    expect(
+      jsonBody(rec.requests.single)['capabilities'],
+      [capabilityFullPackage, capabilityFileList],
+    );
   });
 
   test('packUntilReady repeats identical JSON', () async {
