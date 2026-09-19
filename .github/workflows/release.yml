@@ -1,0 +1,72 @@
+name: release
+# A merged pull request is the only publish entry point: a direct push (including
+# the bot's own bump commit) and a closed-but-unmerged pull request both stay
+# silent. C and C++ ship a source archive instead of a registry package.
+on:
+  pull_request:
+    types: [closed]
+    branches: [sdk/cpp]
+concurrency:
+  group: release-cpp
+  cancel-in-progress: false
+permissions:
+  contents: write
+  # Read the merge commit's pull request number for the changelog.
+  pull-requests: read
+jobs:
+  release:
+    # Only a merged pull request publishes.
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    env:
+      SDK_LANG: cpp
+      # Fast path for the changelog's `#<PR>` tail: this run is the merge of
+      # exactly that pull request.
+      KIRIVERS_PR_NUMBER: ${{ github.event.pull_request.number }}
+      SDK_PUBLISH: ${{ vars.SDK_PUBLISH }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/heads/sdk/cpp
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 scripts/sdk_release.py self-check
+      - name: Plan release
+        id: rel
+        run: |
+          python3 scripts/sdk_release.py plan | tee plan.json
+          echo "action=$(jq -r .action plan.json)" >> "$GITHUB_OUTPUT"
+          echo "tag=$(jq -r .tag plan.json)" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -r .version plan.json)" >> "$GITHUB_OUTPUT"
+      - name: Skip
+        if: steps.rel.outputs.action == 'skip'
+        run: jq -r .reason plan.json
+      - name: Apply version, tag, push, GitHub Release
+        if: steps.rel.outputs.action != 'skip'
+        run: |
+          set -euo pipefail
+          python3 scripts/sdk_release.py apply | tee apply.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          ACTION=$(jq -r .action apply.json)
+          VERSION=$(jq -r .version apply.json)
+          TAG=$(jq -r .tag apply.json)
+          BRANCH=sdk/cpp
+          if [ "$ACTION" = bump ]; then
+            # apply writes the manifest, CHANGELOG.md and sdk-release-notes.md.
+            git add -A
+            git restore --staged sdk-release-notes.md 2>/dev/null || true
+            git status
+            git diff --cached --quiet || git commit -m "chore(release): $VERSION"
+          fi
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "HEAD:$BRANCH" --follow-tags
+          ARCHIVE="kirivers-cpp-$VERSION.zip"
+          git archive --format=zip --prefix="kirivers-cpp-$VERSION/" -o "$ARCHIVE" "$TAG"
+          gh release create "$TAG" --title "$TAG" --notes-file sdk-release-notes.md \
+            --target "$BRANCH" "$ARCHIVE"

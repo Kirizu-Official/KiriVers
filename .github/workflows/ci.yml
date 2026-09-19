@@ -1,0 +1,63 @@
+name: ci
+on:
+  pull_request:
+    branches: [sdk/cpp]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  commitlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Conventional Commits
+        run: |
+          python3 scripts/sdk_release.py commitlint \
+            --pr-title "${{ github.event.pull_request.title }}" \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}"
+
+  # The same suite must configure and pass in both presets: hosted links
+  # curl/OpenSSL/libzip/utf8proc, embedded keeps only nlohmann/json and expects
+  # the host application to inject Transport / Hasher / FileStore /
+  # ArchiveUnpacker / SignatureVerifier.
+  test:
+    needs: commitlint
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: hosted
+            embedded: "OFF"
+          - mode: embedded
+            embedded: "ON"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Hosted dependencies
+        if: matrix.mode == 'hosted'
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y --no-install-recommends
+          libcurl4-openssl-dev libssl-dev libzip-dev libutf8proc-dev
+      - run: cmake -S . -B "build-${{ matrix.mode }}" -DCMAKE_BUILD_TYPE=Debug -DKIRIVERS_EMBEDDED='${{ matrix.embedded }}'
+      - run: cmake --build "build-${{ matrix.mode }}"
+      - run: ctest --test-dir "build-${{ matrix.mode }}" --output-on-failure
+
+  selfcheck:
+    needs: commitlint
+    runs-on: ubuntu-latest
+    env:
+      SDK_LANG: cpp
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - run: python3 scripts/sdk_release.py self-check
