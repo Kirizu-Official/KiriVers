@@ -143,15 +143,19 @@ class Updater:
                 changelog = self.client.changelog(channel, os, arch, from_version=current_version)
             except Exception:
                 changelog = None
-        if check.not_modified or check.no_update or check.update is None:
+        if not check.has_update:
             return UpdateResult(
                 outcome="not_modified" if check.not_modified else "no_update",
                 check=check,
                 changelog=changelog,
             )
         update = check.update
+        assert update is not None
         dest = Path(dest_path) if dest_path is not None else Path(update.file_name or "package.bin")
         dest.parent.mkdir(parents=True, exist_ok=True)
+        write_dest = dest
+        if apply and self.replacer is not None:
+            write_dest = dest.with_name(dest.name + ".kv-partial")
 
         telemetry_kwargs = {
             "os": os,
@@ -171,7 +175,7 @@ class Updater:
                 channel=channel,
                 device_id=device_id,
                 hw_rev=hw_rev,
-                dest=dest,
+                dest=write_dest,
                 current_file=current_file,
                 install_dir=install_dir,
                 sleep=sleep,
@@ -342,7 +346,11 @@ class Updater:
         install_dir: Path,
         sleep,
     ) -> tuple[Path, str, str]:
-        store = PathFileStore(install_dir, hasher=self.hasher)
+        store = self.file_store
+        if store is None:
+            store = PathFileStore(install_dir, hasher=self.hasher)
+        elif isinstance(store, PathFileStore) and store.root is None:
+            store.root = install_dir
         integrity = self.client.integrity(
             update.version_semver or str(update.version_integer or ""),
             os=os,

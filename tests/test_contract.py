@@ -296,6 +296,29 @@ def test_error_envelope_preserves_unknown_code():
     assert err.details == {"k": 1}
 
 
+def test_device_report_response_is_geo_only():
+    transport = MockTransport(
+        responses=json_response(
+            200,
+            {
+                "ip": "127.0.0.1",
+                "country_code": "US",
+                "region_code": "CA",
+                "geo_i18n": {"en": "California"},
+                "id": "roster-uuid",
+                "device_id": "raw-secret",
+                "device_hash": "abc",
+            },
+        )
+    )
+    client = Client(Config(base_url="http://example.test", project_ref="demo"), transport=transport)
+    report = client.device_report("dev-1")
+    assert report.ip == "127.0.0.1"
+    assert report.country_code == "US"
+    assert not hasattr(report, "device_id")
+    assert set(report.__dataclass_fields__) == {"ip", "country_code", "region_code", "geo_i18n"}
+
+
 def test_rate_limited_retry_after():
     transport = MockTransport(
         responses=json_response(
@@ -344,6 +367,37 @@ def test_download_url_preserves_signed_query():
     parsed = urlparse(transport.calls[0].url)
     assert parsed.query == "exp=1&sig=zz"
     assert parsed.netloc == "example.test"
+
+
+def test_download_url_omits_tokens_on_foreign_origin():
+    transport = MockTransport(responses=empty_response(200))
+    client = Client(
+        Config(
+            base_url="http://example.test",
+            project_ref="demo",
+            project_token="secret",
+            channel_token="chan",
+        ),
+        transport=transport,
+    )
+    client.download_url("https://cdn.example/obj.bin")
+    headers = {k.lower(): v for k, v in transport.calls[0].headers.items()}
+    assert "authorization" not in headers
+    assert "x-project-token" not in headers
+    assert "x-channel-token" not in headers
+    assert headers.get("user-agent")
+
+
+def test_same_origin_download_keeps_project_token():
+    transport = MockTransport(responses=empty_response(200))
+    client = Client(
+        Config(base_url="http://example.test", project_ref="demo", project_token="secret"),
+        transport=transport,
+    )
+    client.download("aa" * 32)
+    headers = {k.lower(): v for k, v in transport.calls[0].headers.items()}
+    assert headers.get("authorization") == "Bearer secret"
+    assert headers.get("x-project-token") == "secret"
 
 
 def test_integrity_requires_os_arch_query():

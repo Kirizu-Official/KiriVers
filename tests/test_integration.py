@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import textwrap
 from pathlib import Path
@@ -11,8 +12,9 @@ from pathlib import Path
 import pytest
 
 from kirivers_client import Client, Config, Updater
+from kirivers_client.errors import APIError
 
-FIXTURE = Path(r"D:\KiriVers\configs\sdk-fixture.json")
+FIXTURE = Path(os.environ.get("KIRIVERS_SDK_FIXTURE") or os.environ.get("KIRIVERS_FIXTURE") or r"D:\KiriVers\configs\sdk-fixture.json")
 BACKEND_ISSUE = Path(__file__).resolve().parents[1] / "BACKEND_ISSUE.md"
 
 
@@ -43,7 +45,7 @@ def test_check_download_sha256_against_local_client_plane(tmp_path: Path):
     if not FIXTURE.is_file():
         pytest.fail(f"sdk-fixture.json missing at {FIXTURE}")
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    base = fixture["client_base_url"]
+    base = os.environ.get("KIRIVERS_CLIENT_BASE_URL") or fixture["client_base_url"]
     project = fixture["project_ref"]
     channel = fixture["channel"]
     os_name = fixture["os"]
@@ -67,13 +69,31 @@ def test_check_download_sha256_against_local_client_plane(tmp_path: Path):
             raise
         assert health.status, health
 
-        check = client.check(
-            current_version=current,
-            os=os_name,
-            arch=arch,
-            channel=channel,
-            device_id=device_id,
-        )
+        try:
+            check = client.check(
+                current_version=current,
+                os=os_name,
+                arch=arch,
+                channel=channel,
+                device_id=device_id,
+            )
+        except APIError as exc:
+            _write_backend_issue(
+                repro=(
+                    f"GET {base}/api/v1/projects/{project} and "
+                    f"POST {base}/api/v1/projects/{project}/update/check "
+                    f"current_version={current} os={os_name} arch={arch} channel={channel} "
+                    f"device_id={device_id}"
+                ),
+                expected=f"Project {project} exists; HTTP 200 has_update toward {target} sha256={expected_sha}",
+                actual=f"HTTP {exc.status} {exc.code}: {exc.message}",
+                suggested=(
+                    "Re-seed the local fixture with "
+                    ".trellis/tasks/09-17-client-sdk/scripts/seed_local_fixture.py "
+                    "so slug sdk-fixture has published 1.0.0 and 1.1.0 windows/x86_64 stable artifacts."
+                ),
+            )
+            pytest.fail(f"client plane check failed: {exc.code}: {exc.message}")
         if check.no_update or check.not_modified or check.update is None:
             _write_backend_issue(
                 repro=f"POST /api/v1/projects/{project}/update/check current_version={current} os={os_name} arch={arch}",

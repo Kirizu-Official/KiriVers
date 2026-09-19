@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import zipfile
+from io import BytesIO
+
+import pytest
 
 from kirivers_client import Client, Config, Updater, derive_capabilities
 from kirivers_client.adapters import PathFileStore, ZipArchiveUnpacker
+from kirivers_client.errors import PathError
 from tests.fakes import MockTransport, json_response
 
 
@@ -61,6 +67,18 @@ def test_updater_install_dir_advertises_file_list(tmp_path):
     updater.run(current_version="1.0.0", os="windows", arch="x86_64", install_dir=tmp_path)
     payload = json.loads(transport.calls[0].body.decode("utf-8"))
     assert "file_list" in payload["capabilities"]
+    assert "binary_delta" not in payload["capabilities"]
+    assert "accepted_delta_algos" not in payload
+
+
+def test_default_updater_omits_binary_delta():
+    transport = MockTransport(responses=json_response(204, {}))
+    client = Client(Config(base_url="http://example.test", project_ref="demo"), transport=transport)
+    updater = Updater(client)
+    updater.run(current_version="1.0.0", os="windows", arch="x86_64")
+    payload = json.loads(transport.calls[0].body.decode("utf-8"))
+    assert payload["capabilities"] == ["full_package", "patch_package"]
+    assert "accepted_delta_algos" not in payload
 
 
 def test_updater_without_unpacker_omits_patch_package():
@@ -84,3 +102,29 @@ def test_empty_patcher_algos_do_not_advertise_binary_delta():
     )
     assert caps == ["full_package"]
     assert algos == []
+
+
+def test_zip_unpacker_maps_hash_named_members(tmp_path):
+    payload = b"hello-pack"
+    digest = hashlib.sha256(payload).hexdigest()
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr(digest, payload)
+    ZipArchiveUnpacker().unpack(
+        buf.getvalue(),
+        str(tmp_path),
+        [{"path": "dir/app.bin", "sha256": digest}],
+    )
+    assert (tmp_path / "dir" / "app.bin").read_bytes() == payload
+
+
+def test_zip_unpacker_rejects_traversal(tmp_path):
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("x", b"x")
+    with pytest.raises(PathError):
+        ZipArchiveUnpacker().unpack(
+            buf.getvalue(),
+            str(tmp_path),
+            [{"path": "../escape.bin", "sha256": "aa"}],
+        )

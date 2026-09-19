@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -251,3 +252,139 @@ def test_downgrade_does_not_call_diff(tmp_path: Path):
         apply=False,
     )
     assert result.diff_mode == "full_package"
+
+
+def test_updater_200_without_has_update_is_no_update(tmp_path: Path):
+    def handler(req):
+        if req.url.endswith("/update/check"):
+            body = _check_body("ab" * 32, "/api/v1/projects/demo/packages/" + "ab" * 32)
+            body["has_update"] = False
+            return json_response(200, body)
+        raise AssertionError(f"must not continue past check: {req.url}")
+
+    client = Client(Config(base_url="http://example.test", project_ref="demo"), transport=MockTransport(handler=handler))
+    updater = Updater(client, archive_unpacker=None, file_store=None, replacer=None)
+    result = updater.run(
+        current_version="1.0.0",
+        os="windows",
+        arch="x86_64",
+        dest_path=tmp_path / "x.bin",
+        apply=False,
+    )
+    assert result.outcome == "no_update"
+
+
+def test_apply_replaces_from_staging_path(tmp_path: Path):
+    from kirivers_client.transport import TransportResponse
+
+    blob = b"test"
+    digest = hashlib.sha256(blob).hexdigest()
+    url = "/api/v1/projects/demo/packages/" + digest
+    dest = tmp_path / "app.bin"
+
+    class RecordingReplacer:
+        def __init__(self) -> None:
+            self.source = ""
+            self.destination = ""
+
+        def replace(self, source: str, destination: str) -> None:
+            self.source = source
+            self.destination = destination
+            Path(destination).write_bytes(Path(source).read_bytes())
+            Path(source).unlink()
+
+    def handler(req):
+        if req.url.endswith("/update/check"):
+            return json_response(200, _check_body(digest, url))
+        if req.url.endswith("/telemetry/report"):
+            return json_response(202, {"status": "accepted"})
+        if digest in req.url:
+            return TransportResponse(status=200, headers={}, body=blob)
+        raise AssertionError(req.url)
+
+    rec = RecordingReplacer()
+    client = Client(Config(base_url="http://example.test", project_ref="demo"), transport=MockTransport(handler=handler))
+    updater = Updater(client, archive_unpacker=None, file_store=None, replacer=rec)
+    result = updater.run(
+        current_version="1.0.0",
+        os="windows",
+        arch="x86_64",
+        dest_path=dest,
+        apply=True,
+    )
+    assert result.applied is True
+    assert rec.destination == str(dest)
+    assert rec.source != str(dest)
+    assert rec.source.endswith(".kv-partial")
+    assert dest.read_bytes() == blob
+    assert not Path(rec.source).exists()
+
+
+def test_via_pack_uses_injected_file_store(tmp_path: Path):
+    from kirivers_client.transport import TransportResponse
+
+    blob = b"pack-bytes"
+    digest = hashlib.sha256(blob).hexdigest()
+    url = "/api/v1/projects/demo/packages/" + digest
+    seen: list[str] = []
+
+    class RecordingStore:
+        def can_write_individual_files(self) -> bool:
+            return True
+
+        def exists(self, relative_path: str) -> bool:
+            seen.append(relative_path)
+            return relative_path == "keep.txt"
+
+        def read_bytes(self, relative_path: str) -> bytes:
+            return b"ok"
+
+        def write_bytes(self, relative_path: str, data: bytes) -> None:
+            return None
+
+        def sha256_hex(self, relative_path: str) -> str:
+            return "00" * 32
+
+    def handler(req):
+        if req.url.endswith("/update/check"):
+            body = _check_body(digest, url)
+            body["package_type"] = "multi_file"
+            return json_response(200, body)
+        if "/integrity" in req.url:
+            return json_response(
+                200,
+                {
+                    "version_semver": "1.1.0",
+                    "package_type": "multi_file",
+                    "files": [
+                        {"path": "keep.txt", "install_policy": "KEEP_IF_EXISTS", "sha256": "00" * 32},
+                        {"path": "app.bin", "install_policy": "OVERWRITE", "sha256": "11" * 32},
+                    ],
+                },
+            )
+        if req.url.endswith("/update/pack"):
+            payload = json.loads(req.body.decode("utf-8"))
+            assert payload["needed_paths"] == ["app.bin"]
+            return json_response(200, {"status": "ready", "package_url": url, "sha256": digest, "files": []})
+        if req.url.endswith("/telemetry/report"):
+            return json_response(202, {"status": "accepted"})
+        if digest in req.url:
+            return TransportResponse(status=200, headers={}, body=blob)
+        raise AssertionError(req.url)
+
+    client = Client(Config(base_url="http://example.test", project_ref="demo"), transport=MockTransport(handler=handler))
+    updater = Updater(client, file_store=RecordingStore(), archive_unpacker=None, replacer=None)
+    dest = tmp_path / "pkg.bin"
+    result = updater.run(
+        current_version="1.0.0",
+        os="windows",
+        arch="x86_64",
+        dest_path=dest,
+        install_dir=tmp_path,
+        apply=False,
+        sleep=lambda _s: None,
+    )
+    assert result.outcome == "downloaded"
+    assert "keep.txt" in seen
+    assert "app.bin" in seen
+    assert dest.read_bytes() == blob

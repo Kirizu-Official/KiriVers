@@ -85,7 +85,7 @@ class HashlibHasher:
         return hashlib.sha256(data).hexdigest()
 
     def md5_hex(self, data: bytes) -> str:
-        return hashlib.md5(data).hexdigest()
+        return hashlib.md5(data, usedforsecurity=False).hexdigest()
 
     def sha256_file(self, path: str | Path) -> str:
         digest = hashlib.sha256()

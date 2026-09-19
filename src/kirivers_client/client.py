@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any, Mapping
-from urllib.parse import quote, urlencode, urljoin
+from urllib.parse import quote, urlencode, urljoin, urlparse
 
 from kirivers_client.errors import APIError, ConfigError
 from kirivers_client.models import (
@@ -91,6 +91,29 @@ class Client:
             headers["X-Channel-Token"] = self.config.channel_token
         if extra:
             headers.update(extra)
+        return headers
+
+    def _same_origin(self, url: str) -> bool:
+        parsed = urlparse(url)
+        if not parsed.netloc:
+            return True
+        base = urlparse(self.config.base_url)
+        return parsed.scheme.lower() == base.scheme.lower() and parsed.netloc.lower() == base.netloc.lower()
+
+    def _headers_for_url(self, url: str, extra: dict[str, str] | None = None) -> dict[str, str]:
+        """Send project/channel tokens only to the client-plane origin.
+
+        Check `package_url` may be an absolute public object URL (S3/CDN). Those
+        hosts must not receive `Authorization` / `X-Project-Token`.
+        """
+        if self._same_origin(url):
+            return self._auth_headers(extra)
+        headers = {"User-Agent": USER_AGENT}
+        if extra:
+            headers.update(extra)
+        for key in list(headers):
+            if key.lower() in {"authorization", "x-project-token", "x-channel-token"}:
+                del headers[key]
         return headers
 
     def _project_url(self, *parts: str, query: Mapping[str, Any] | None = None) -> str:
@@ -548,7 +571,7 @@ class Client:
         if byte_range:
             extra["Range"] = byte_range
         status, headers, body = self._send(
-            "GET", url, headers=self._auth_headers(extra), accept={200, 206}
+            "GET", url, headers=self._headers_for_url(url, extra), accept={200, 206}
         )
         return BinaryResult(
             status=status,
@@ -563,7 +586,7 @@ class Client:
         if byte_range:
             extra["Range"] = byte_range
         status, headers, body = self._send(
-            "HEAD", url, headers=self._auth_headers(extra), accept={200, 206}
+            "HEAD", url, headers=self._headers_for_url(url, extra), accept={200, 206}
         )
         return BinaryResult(
             status=status,
