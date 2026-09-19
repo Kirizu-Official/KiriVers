@@ -1,0 +1,77 @@
+name: release
+on:
+  push:
+    branches: [sdk/csharp]
+    tags-ignore:
+      - "**"
+concurrency:
+  group: release-csharp-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: write
+  id-token: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      SDK_LANG: csharp
+      SDK_PUBLISH: ${{ vars.SDK_PUBLISH }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - run: python3 scripts/sdk_release.py self-check
+      - run: dotnet test
+      - name: Plan release
+        id: rel
+        run: |
+          python3 scripts/sdk_release.py plan | tee plan.json
+          echo "action=$(jq -r .action plan.json)" >> "$GITHUB_OUTPUT"
+          echo "tag=$(jq -r .tag plan.json)" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -r .version plan.json)" >> "$GITHUB_OUTPUT"
+      - name: Skip
+        if: steps.rel.outputs.action == 'skip'
+        run: jq -r .reason plan.json
+      - name: Require registry secrets
+        if: steps.rel.outputs.action != 'skip'
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then echo "missing secret NUGET_API_KEY"; exit 1; fi
+      - name: Apply version, tag, push, GitHub Release
+        if: steps.rel.outputs.action != 'skip'
+        run: |
+          set -euo pipefail
+          python3 scripts/sdk_release.py apply | tee apply.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          ACTION=$(jq -r .action apply.json)
+          VERSION=$(jq -r .version apply.json)
+          TAG=$(jq -r .tag apply.json)
+          BRANCH="${{ github.ref_name }}"
+          if [ "$ACTION" = bump ]; then
+            git add -u
+            git restore --staged sdk-release-notes.md 2>/dev/null || true
+            git status
+            git diff --cached --quiet || git commit -m "chore(release): $VERSION"
+          fi
+          git tag -a "$TAG" -m "$TAG"
+          git push origin "HEAD:$BRANCH" --follow-tags
+          gh release create "$TAG" --title "$TAG" --notes-file sdk-release-notes.md --target "$BRANCH"
+
+      - name: Publish NuGet
+        if: steps.rel.outputs.action != 'skip'
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          set -e
+          if [ -z "$NUGET_API_KEY" ]; then echo "missing secret NUGET_API_KEY"; exit 1; fi
+          dotnet pack -c Release
+          dotnet nuget push "$(find . -name '*.nupkg' -not -name '*.symbols.nupkg' | head -n 1)" \
+            --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY"
