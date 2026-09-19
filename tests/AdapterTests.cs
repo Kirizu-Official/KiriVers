@@ -101,6 +101,11 @@ public class AdapterTests
         Assert.Equal(PathUtil.Normalize(nfc), PathUtil.Normalize(nfd));
         Assert.Throws<PathException>(() => PathUtil.Normalize("../etc/passwd"));
         Assert.Throws<PathException>(() => PathUtil.Normalize("foo/../bar"));
+        Assert.Throws<PathException>(() => PathUtil.Normalize("/etc/passwd"));
+        Assert.Throws<PathException>(() => PathUtil.Normalize(@"\windows\system32"));
+        Assert.Throws<PathException>(() => PathUtil.Normalize(@"C:\Windows\System32"));
+        Assert.Throws<PathException>(() => PathUtil.Normalize("foo/C:/bar"));
+        Assert.Throws<PathException>(() => PathUtil.Normalize("a\nb"));
     }
 
     [Fact]
@@ -206,6 +211,73 @@ public class AdapterTests
     }
 
     [Fact]
+    public void ZipUnpackerRejectsDriveLetterPaths()
+    {
+        var payload = "hello-zip"u8.ToArray();
+        var name = new BclHasher().Sha256(payload);
+        using var zipStream = new MemoryStream();
+        using (var zip = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = zip.CreateEntry(name);
+            using var s = entry.Open();
+            s.Write(payload);
+        }
+
+        zipStream.Position = 0;
+        var dest = Path.Combine(Path.GetTempPath(), "kv-unzip-" + Guid.NewGuid().ToString("N"));
+        Assert.Throws<PathException>(() =>
+            new ZipArchiveUnpacker().Unpack(zipStream, [new IntegrityFile { Path = @"C:\Windows\system32\evil.bin", Sha256 = name }], dest));
+        if (Directory.Exists(dest))
+        {
+            Directory.Delete(dest, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task PackUntilReadyTreatsHttp202EmptyBodyAsPending()
+    {
+        var calls = 0;
+        var t = new RecordingTransport
+        {
+            Handler = _ =>
+            {
+                calls++;
+                if (calls == 1)
+                {
+                    return new TransportResponse { StatusCode = 202, Body = [] };
+                }
+
+                return new TransportResponse { StatusCode = 200, Body = """{"status":"ready","package_url":"/p","sha256":"ab"}"""u8.ToArray() };
+            },
+        };
+        var client = new Client(new ClientOptions
+        {
+            BaseUrl = TestClient.Base,
+            ProjectRef = TestClient.Project,
+            Transport = t,
+            UseDefaultAdapters = false,
+            Hasher = new BclHasher(),
+        });
+        var result = await client.PackUntilReadyAsync(new PackRequest
+        {
+            SourceVersion = "1.0.0",
+            TargetVersion = "1.1.0",
+            Os = "windows",
+            Arch = "x86_64",
+            NeededPaths = ["a"],
+        }, new PackPollOptions
+        {
+            InitialDelay = TimeSpan.FromMilliseconds(1),
+            MaxDelay = TimeSpan.FromMilliseconds(1),
+            Deadline = TimeSpan.FromSeconds(5),
+        });
+        Assert.Equal("ready", result.Status);
+        Assert.Equal(2, t.Requests.Count);
+        Assert.Equal(t.Requests[0].Url, t.Requests[1].Url);
+        Assert.True((t.Requests[0].Body ?? []).AsSpan().SequenceEqual(t.Requests[1].Body ?? []));
+    }
+
+    [Fact]
     public void FileReplaceReplacerReplacesExistingFile()
     {
         var dir = Path.Combine(Path.GetTempPath(), "kv-repl-" + Guid.NewGuid().ToString("N"));
@@ -232,6 +304,50 @@ public class AdapterTests
             Sha256 = "aa",
         });
         Assert.Equal("102\n1.2.3\nroot\n/u\n1\naa", payload);
+    }
+
+    [Fact]
+    public void DefaultClientCheckCapabilitiesAreFullPackageOnly()
+    {
+        using var client = new Client(new ClientOptions
+        {
+            BaseUrl = TestClient.Base,
+            ProjectRef = TestClient.Project,
+            Transport = new RecordingTransport(),
+        });
+        Assert.Equal(new[] { Capability.FullPackage }, client.Capabilities);
+        Assert.Empty(client.AcceptedDeltaAlgos);
+        Assert.Null(client.FileStore);
+        Assert.Null(client.ArchiveUnpacker);
+        Assert.Null(client.Patcher);
+    }
+
+    [Fact]
+    public async Task FileStoreRootAdvertisesFileListNotPatchPackage()
+    {
+        var t = new RecordingTransport
+        {
+            Handler = _ => new TransportResponse
+            {
+                StatusCode = 200,
+                Body = """{"has_update":false,"is_mandatory":false,"is_downgrade":false,"reason":"normal","compare_engine":"semver","version_integer":null,"version_semver":"1.0.0","target_channel":"stable","target_hw_rev":null,"package_type":"single_file","root_hash":"","package_url":"","file_name":"","size":0,"sha256":"","delta_available":false}"""u8.ToArray(),
+            },
+        };
+        var root = Path.Combine(Path.GetTempPath(), "kv-fs-root-" + Guid.NewGuid().ToString("N"));
+        var client = new Client(new ClientOptions
+        {
+            BaseUrl = TestClient.Base,
+            ProjectRef = TestClient.Project,
+            Transport = t,
+            FileStoreRoot = root,
+        });
+        Assert.Contains(Capability.FileList, client.Capabilities);
+        Assert.DoesNotContain(Capability.PatchPackage, client.Capabilities);
+        await client.CheckAsync(new CheckRequest { CurrentVersion = "1.0.0", Os = "windows", Arch = "x86_64" });
+        using var json = System.Text.Json.JsonDocument.Parse(t.LastJson);
+        var caps = json.RootElement.GetProperty("capabilities").EnumerateArray().Select(x => x.GetString()).ToArray();
+        Assert.Equal(new[] { Capability.FullPackage, Capability.FileList }, caps);
+        Directory.Delete(root, recursive: true);
     }
 
     [Fact]

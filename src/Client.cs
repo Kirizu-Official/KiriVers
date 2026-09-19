@@ -19,8 +19,12 @@ public sealed class ClientOptions
     public IReplacer? Replacer { get; init; }
     public string? SigningPublicKeyPem { get; init; }
     public string SigningAlgo { get; init; } = BclSignatureVerifier.Ed25519;
-    /// <summary>When true, fill missing adapters with stdlib defaults (except Patcher).</summary>
+    /// <summary>
+    /// When true, fill Transport/Hasher/SignatureVerifier/Replacer with stdlib defaults.
+    /// FileStore, ArchiveUnpacker, and Patcher stay off unless injected (D13 check capabilities).
+    /// </summary>
     public bool UseDefaultAdapters { get; init; } = true;
+    /// <summary>When set (and <see cref="FileStore"/> is omitted), installs a <see cref="LocalFileStore"/> at this root and may advertise <c>file_list</c>.</summary>
     public string? FileStoreRoot { get; init; }
 }
 
@@ -60,11 +64,11 @@ public sealed class Client : IDisposable
         }
 
         Hasher = options.Hasher ?? (options.UseDefaultAdapters ? new BclHasher() : null);
-        FileStore = options.FileStore ?? (options.UseDefaultAdapters
-            ? new LocalFileStore(options.FileStoreRoot ?? Path.Combine(Path.GetTempPath(), "kirivers-client"))
+        FileStore = options.FileStore ?? (options.FileStoreRoot is { Length: > 0 }
+            ? new LocalFileStore(options.FileStoreRoot)
             : null);
         SignatureVerifier = options.SignatureVerifier ?? (options.UseDefaultAdapters ? new BclSignatureVerifier() : null);
-        ArchiveUnpacker = options.ArchiveUnpacker ?? (options.UseDefaultAdapters ? new ZipArchiveUnpacker() : null);
+        ArchiveUnpacker = options.ArchiveUnpacker;
         Patcher = options.Patcher;
         Replacer = options.Replacer ?? (options.UseDefaultAdapters ? new FileReplaceReplacer() : null);
 
@@ -282,7 +286,19 @@ public sealed class Client : IDisposable
             throw ApiException.FromResponse(resp.StatusCode, resp.Body, resp.Headers);
         }
 
-        return JsonUtil.Deserialize<PackResponse>(resp.Body);
+        // HTTP 202 with an empty/unspecified body is still "pending" (design §3.5).
+        if (resp.StatusCode == 202 && resp.Body.Length == 0)
+        {
+            return new PackResponse { Status = "pending" };
+        }
+
+        var result = JsonUtil.Deserialize<PackResponse>(resp.Body);
+        if (resp.StatusCode == 202 && string.IsNullOrEmpty(result.Status))
+        {
+            result.Status = "pending";
+        }
+
+        return result;
     }
 
     public Task<BinaryResponse> DownloadAsync(string urlOrPath, string? range = null, CancellationToken cancellationToken = default) =>

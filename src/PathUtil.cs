@@ -4,19 +4,52 @@ using System.Text;
 namespace Kirizu.KiriVers.Client;
 
 /// <summary>
-/// Aligns client fileset paths with the server: backslash to slash, Unicode NFC, reject <c>..</c>.
+/// Aligns client fileset paths with the server: backslash to slash, Unicode NFC,
+/// reject <c>..</c>, leading slashes, drive letters, and ASCII control characters.
 /// </summary>
 public static class PathUtil
 {
     public static string Normalize(string relativePath)
     {
-        if (string.IsNullOrEmpty(relativePath))
+        var trimmed = (relativePath ?? "").Trim();
+        if (trimmed.Length == 0)
         {
             throw new PathException("path must be non-empty");
         }
 
-        var nfc = relativePath.Normalize(NormalizationForm.FormC);
-        var unified = nfc.Replace('\\', '/');
+        foreach (var c in trimmed)
+        {
+            if (c < 0x20)
+            {
+                throw new PathException("path contains a control character");
+            }
+        }
+
+        if (trimmed.StartsWith('/') || trimmed.StartsWith('\\'))
+        {
+            throw new PathException("path cannot start with a leading slash");
+        }
+
+        if (HasDrivePrefix(trimmed))
+        {
+            throw new PathException("path cannot contain a drive letter");
+        }
+
+        var unified = trimmed.Replace('\\', '/');
+        foreach (var part in unified.Split('/'))
+        {
+            if (HasDrivePrefix(part))
+            {
+                throw new PathException("path segment cannot contain a drive letter");
+            }
+
+            if (part is "." or "..")
+            {
+                throw new PathException("path must not contain '.' or '..' segments");
+            }
+        }
+
+        unified = unified.Normalize(NormalizationForm.FormC);
         while (unified.Contains("//", StringComparison.Ordinal))
         {
             unified = unified.Replace("//", "/", StringComparison.Ordinal);
@@ -30,7 +63,7 @@ public static class PathUtil
 
         foreach (var part in unified.Split('/'))
         {
-            if (part is "." or "..")
+            if (part is "." or ".." or "")
             {
                 throw new PathException("path must not contain '.' or '..' segments");
             }
@@ -38,6 +71,9 @@ public static class PathUtil
 
         return unified;
     }
+
+    static bool HasDrivePrefix(string value) =>
+        value.Length >= 2 && char.IsAsciiLetter(value[0]) && value[1] == ':';
 
     public static string HexLower(ReadOnlySpan<byte> hash)
     {

@@ -73,7 +73,6 @@ public class ContractTests
             Transport = t,
             ProjectToken = "proj-token",
             ChannelToken = "chan-token",
-            FileStoreRoot = Path.Combine(Path.GetTempPath(), "kv-" + Guid.NewGuid().ToString("N")),
         });
 
         await client.GetHealthAsync();
@@ -107,9 +106,9 @@ public class ContractTests
             Assert.False(root.TryGetProperty("local_sha256", out _));
             Assert.False(root.TryGetProperty("dirty_paths", out _));
             var caps = root.GetProperty("capabilities").EnumerateArray().Select(x => x.GetString()).ToArray();
-            Assert.Contains(Capability.FullPackage, caps);
-            Assert.Contains(Capability.PatchPackage, caps);
-            Assert.Contains(Capability.FileList, caps);
+            Assert.Equal(new[] { Capability.FullPackage }, caps);
+            Assert.DoesNotContain(Capability.PatchPackage, caps);
+            Assert.DoesNotContain(Capability.FileList, caps);
             Assert.DoesNotContain(Capability.BinaryDelta, caps);
             Assert.False(root.TryGetProperty("accepted_delta_algos", out _));
         }

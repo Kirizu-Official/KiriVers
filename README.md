@@ -84,19 +84,19 @@ Errors parse `{ "error": { "code", "message", "details" } }` into `ApiException.
 
 No runtime `PackageReference`. JSON is `System.Text.Json` (not an adapter).
 
-| Adapter | Default | Caller must inject to enable |
-|---------|---------|------------------------------|
+| Adapter | Default implementation | Caller must inject to enable |
+|---------|------------------------|------------------------------|
 | `ITransport` | `HttpClient` | — |
-| `IFileStore` | `System.IO` (`LocalFileStore`) | Disable default to omit `file_list` |
+| `IFileStore` | `System.IO` (`LocalFileStore`) | Inject, or set `FileStoreRoot`, to send `file_list` |
 | `IHasher` | `SHA256` / `MD5` | — |
-| `IArchiveUnpacker` | `System.IO.Compression.ZipArchive` | Disable default to omit `patch_package` |
+| `IArchiveUnpacker` | `System.IO.Compression.ZipArchive` (`ZipArchiveUnpacker`) | Inject to send `patch_package` |
 | `ISignatureVerifier` | RSA-SHA256 (`RSA`) + Ed25519 (RFC 8032, BCL math) | Configure `SigningPublicKeyPem` to enforce `signature` |
 | `IPatcher` | **none** | Inject to send `binary_delta` + `accepted_delta_algos` |
 | `IReplacer` | `File.Replace`; Windows in-use files: P/Invoke `MoveFileEx` (replace now, or delay until reboot) | Inject to replace APK / custom layouts |
 
 ### Capabilities (D13)
 
-Default check body includes `full_package`. With the stock adapters it also sends `patch_package` (zip unpacker) and `file_list` (file store can write individual files). It does **not** send `binary_delta` or `accepted_delta_algos` unless a live `IPatcher` advertises algorithms.
+Default check body is **`["full_package"]` only**. `patch_package` is sent when an `IArchiveUnpacker` is attached. `file_list` is sent when an `IFileStore` that can write individual files is attached (`FileStore` or `FileStoreRoot`). `binary_delta` / `accepted_delta_algos` are sent only when a live `IPatcher` advertises algorithms. Do not set `UseDefaultAdapters` expecting extra check capabilities: Hasher / Replacer / Transport defaults do not change the check body.
 
 `local_sha256` is never sent on check; it is only used on `POST /update/diff`.
 

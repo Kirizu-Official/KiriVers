@@ -148,7 +148,11 @@ public sealed class Updater
             {
                 return await TryDeltaAsync(request, body, hasher, targetSha, cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception)
             {
                 // Unknown magic, patch failure, or hash mismatch → full package.
             }
@@ -163,7 +167,11 @@ public sealed class Updater
             {
                 return await TryPackAsync(request, body, hasher, targetSha, stageDir, cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception)
             {
                 // Fall back to the check full package.
             }
@@ -297,10 +305,11 @@ public sealed class Updater
             }
         }
 
-        if (_client.ArchiveUnpacker is not null && pack.Files is { Count: > 0 })
+        var unpacker = _client.ArchiveUnpacker ?? new ZipArchiveUnpacker();
+        if (pack.Files is { Count: > 0 })
         {
             using var ms = new MemoryStream(zip.Body, writable: false);
-            _client.ArchiveUnpacker.Unpack(ms, pack.Files, stageDir);
+            unpacker.Unpack(ms, pack.Files, stageDir);
         }
 
         return (zip.Body, pack.DiffMode ?? Capability.PatchPackage, pack.Sha256 ?? hasher.Sha256(zip.Body));

@@ -207,8 +207,22 @@ public sealed class ZipArchiveUnpacker : IArchiveUnpacker
             }
 
             var destRel = PathUtil.Normalize(file.Path);
-            var dest = Path.GetFullPath(Path.Combine(destinationDirectory, destRel.Replace('/', Path.DirectorySeparatorChar)));
-            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+            var destRoot = Path.GetFullPath(destinationDirectory);
+            var destRootPrefix = destRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                                 + Path.DirectorySeparatorChar;
+            var dest = Path.GetFullPath(Path.Combine(destRoot, destRel.Replace('/', Path.DirectorySeparatorChar)));
+            if (!dest.StartsWith(destRootPrefix, StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(dest, destRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new PathException("unpack path escapes destination directory");
+            }
+
+            var destDir = Path.GetDirectoryName(dest);
+            if (!string.IsNullOrEmpty(destDir))
+            {
+                Directory.CreateDirectory(destDir);
+            }
+
             entry.ExtractToFile(dest, overwrite: true);
         }
     }
