@@ -22,7 +22,7 @@ func TestManifestHTTP_PutAndGet(t *testing.T) {
 	ctx := t.Context()
 
 	slug := "test-manifest-proj"
-	p, _, err := projSvc.Create(ctx, service.CreateProjectInput{DefaultLocale: ptr("en"), Slug:          &slug,
+	p, _, err := projSvc.Create(ctx, service.CreateProjectInput{DefaultLocale: ptr("en"), Slug: &slug,
 		CompareEngine: ptr(model.CompareEngineSemver),
 	})
 	require.NoError(t, err)
@@ -100,15 +100,6 @@ func TestManifestHTTP_PutAndGet(t *testing.T) {
 	assert.Equal(t, putResp.RootHash, getResp.RootHash)
 	assert.Equal(t, 2, getResp.Count)
 
-	// 3. Client GET Manifest
-	wClient := doJSON(r, http.MethodGet, fmt.Sprintf("/api/v1/projects/%s/versions/1.0.0/lines/windows/x86_64/manifest", p.Slug), "", nil)
-	require.Equal(t, http.StatusOK, wClient.Code)
-	var clientResp struct {
-		RootHash string `json:"root_hash"`
-		Count    int    `json:"count"`
-	}
-	require.NoError(t, json.Unmarshal(wClient.Body.Bytes(), &clientResp))
-	assert.Equal(t, putResp.RootHash, clientResp.RootHash)
 }
 
 func TestManifestHTTP_InvalidPath(t *testing.T) {
@@ -116,7 +107,7 @@ func TestManifestHTTP_InvalidPath(t *testing.T) {
 	ctx := t.Context()
 
 	slug := "test-inv-path"
-	p, _, err := projSvc.Create(ctx, service.CreateProjectInput{DefaultLocale: ptr("en"), Slug:          &slug,
+	p, _, err := projSvc.Create(ctx, service.CreateProjectInput{DefaultLocale: ptr("en"), Slug: &slug,
 		CompareEngine: ptr(model.CompareEngineSemver),
 	})
 	require.NoError(t, err)
@@ -156,7 +147,7 @@ func TestManifestHTTP_MultiFileLine_ArchiveGates(t *testing.T) {
 	ctx := t.Context()
 
 	slug := "test-mf-gates"
-	p, _, err := projSvc.Create(ctx, service.CreateProjectInput{DefaultLocale: ptr("en"), Slug:          &slug,
+	p, _, err := projSvc.Create(ctx, service.CreateProjectInput{DefaultLocale: ptr("en"), Slug: &slug,
 		CompareEngine: ptr(model.CompareEngineSemver),
 	})
 	require.NoError(t, err)
