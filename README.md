@@ -16,6 +16,8 @@ Language: <b>中文</b> · <a href="README.EN.md">English</a>
 
 KiriVers 让你 **自己托管软件更新**：把安装包、固件或文件列表发布到本服务，设备上的应用来检查并下载。它不是 git，也不能替代 App Store、Google Play 或 Microsoft Store，也不是 APT / RPM / Flatpak 软件源。
 
+> !!! 警告：该项目大部分代码由 AI Agent 自动生成，由于作者时间不多，暂时没有经过人工审核和充分测试，可能存在风险。
+
 一个进程同时提供两个端口：
 
 | 服务 | 默认地址 | 职责 |
