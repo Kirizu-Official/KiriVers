@@ -45,7 +45,7 @@ Thumbs.db
 .openai/
 .agent/
 .qoder/
-.trellis/
+.trellis/*
 !.trellis/spec/
 
 # 前端
