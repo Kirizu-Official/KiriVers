@@ -1,0 +1,3313 @@
+{
+  "components": {
+    "parameters": {
+      "projectRef": {
+        "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+        "in": "path",
+        "name": "project_ref",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "ChangelogVersion": {
+        "additionalProperties": false,
+        "description": "changelog_versions 数组里的一条版本日志。",
+        "properties": {
+          "changelog": {
+            "description": "该版本本地化后的 Markdown 正文。",
+            "type": "string"
+          },
+          "channel": {
+            "description": "该版本所在渠道。",
+            "type": "string"
+          },
+          "had_artifact_for_request_platform": {
+            "description": "请求的 os/arch 是否有产物。",
+            "type": "boolean"
+          },
+          "platform_notes": {
+            "description": "平台说明。项目关闭 changelog_include_platform_notes 时不出现。",
+            "type": "string"
+          },
+          "status": {
+            "description": "版本状态：published / deprecated / revoked。",
+            "enum": [
+              "published",
+              "deprecated",
+              "revoked"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "description": "该版本更新日志标题。",
+            "type": "string"
+          },
+          "version_integer": {
+            "description": "整数版本号；没有则为 null。",
+            "nullable": true,
+            "type": "integer"
+          },
+          "version_semver": {
+            "description": "SemVer 2.0 字符串（不含 +build）；没有则为 null。",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel",
+          "status",
+          "changelog",
+          "had_artifact_for_request_platform",
+          "version_integer",
+          "version_semver"
+        ],
+        "type": "object"
+      },
+      "ClientAnnouncement": {
+        "description": "一条客户端公告。locale 是语言，markdown 是展开后的正文。",
+        "properties": {
+          "ends_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string",
+            "description": "展示结束时间；null 表示不限制。"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string",
+            "description": "公告 UUID。"
+          },
+          "locale": {
+            "type": "string",
+            "description": "这条公告的语言。"
+          },
+          "markdown": {
+            "type": "string",
+            "description": "正文。${site_url} 已按 Referer 展开。"
+          },
+          "starts_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string",
+            "description": "展示开始时间；null 表示不限制。"
+          },
+          "subtitle": {
+            "type": "string",
+            "description": "副标题。"
+          },
+          "title": {
+            "type": "string",
+            "description": "标题。"
+          }
+        },
+        "type": "object"
+      },
+      "ClientChannel": {
+        "description": "公开渠道。不含口令哈希。",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "渠道显示名。"
+          },
+          "slug": {
+            "type": "string",
+            "description": "渠道标识，检查更新时作为 channel 查询参数。"
+          },
+          "stability_rank": {
+            "type": "integer",
+            "description": "稳定性排序，数字越大越稳定。"
+          }
+        },
+        "type": "object"
+      },
+      "ClientChannelList": {
+        "properties": {
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/ClientChannel"
+            },
+            "type": "array",
+            "description": "公开渠道列表。"
+          }
+        },
+        "type": "object",
+        "description": "公开渠道列表。"
+      },
+      "ClientLanguage": {
+        "description": "项目语言。不含 project_id。",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "语言代码，例如 zh-CN。"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "给人看的语言名。"
+          },
+          "is_default": {
+            "type": "boolean",
+            "description": "是否项目默认语言。"
+          },
+          "sort_order": {
+            "type": "integer",
+            "description": "展示顺序，越小越靠前。"
+          }
+        },
+        "type": "object"
+      },
+      "ClientLanguageList": {
+        "properties": {
+          "languages": {
+            "items": {
+              "$ref": "#/components/schemas/ClientLanguage"
+            },
+            "type": "array",
+            "description": "项目语言列表。"
+          }
+        },
+        "type": "object",
+        "description": "项目语言列表。"
+      },
+      "ClientLoginInput": {
+        "properties": {
+          "arch": {
+            "type": "string",
+            "description": "设备 CPU 架构。"
+          },
+          "channel": {
+            "type": "string",
+            "description": "当前渠道。"
+          },
+          "custom": {
+            "additionalProperties": true,
+            "description": "自定义 JSON，最大 16KiB、深度 8。只在 report 写入。",
+            "type": "object"
+          },
+          "device_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string",
+            "description": "调用方生成的设备标识，1–128 字符。"
+          },
+          "os": {
+            "type": "string",
+            "description": "设备操作系统。"
+          },
+          "version": {
+            "type": "string",
+            "description": "当前安装版本。"
+          }
+        },
+        "required": [
+          "device_id"
+        ],
+        "type": "object",
+        "description": "设备上报请求体。"
+      },
+      "ClientMatrixList": {
+        "properties": {
+          "matrix": {
+            "items": {
+              "$ref": "#/components/schemas/ClientMatrixRow"
+            },
+            "type": "array",
+            "description": "平台矩阵行。"
+          }
+        },
+        "type": "object",
+        "description": "平台矩阵列表。"
+      },
+      "ClientMatrixRow": {
+        "properties": {
+          "arch": {
+            "type": "string",
+            "description": "CPU 架构。"
+          },
+          "os": {
+            "type": "string",
+            "description": "操作系统。"
+          },
+          "package_type": {
+            "enum": [
+              "single_file",
+              "multi_file"
+            ],
+            "type": "string",
+            "description": "该平台是单文件还是多文件。"
+          }
+        },
+        "type": "object",
+        "description": "一条 os/arch 包装方式。"
+      },
+      "Diff200": {
+        "additionalProperties": false,
+        "description": "差量查询结果：告诉客户端下全量、下差量，还是下少量单文件。",
+        "properties": {
+          "channel": {
+            "description": "目标版本所在渠道。",
+            "type": "string"
+          },
+          "compare_engine": {
+            "description": "版本比较方式：semver 或 integer。",
+            "enum": [
+              "integer",
+              "semver"
+            ],
+            "type": "string"
+          },
+          "deleted_paths": {
+            "description": "源清单有、目标清单没有的路径（多文件）。",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "delta_algo": {
+            "description": "diff_mode=binary_delta 时的算法名。",
+            "type": "string"
+          },
+          "diff_mode": {
+            "description": "full_package / patch_package / binary_delta / file_list。",
+            "enum": [
+              "full_package",
+              "patch_package",
+              "binary_delta",
+              "file_list"
+            ],
+            "type": "string"
+          },
+          "file_name": {
+            "description": "建议保存的文件名，不参与签名。",
+            "type": "string"
+          },
+          "files": {
+            "description": "仅 file_list：待下载文件的路径和 URL。",
+            "items": {
+              "properties": {
+                "md5": {
+                  "type": "string",
+                  "description": "MD5。compact=true 时省略。"
+                },
+                "path": {
+                  "type": "string",
+                  "description": "相对安装路径，正斜杠。"
+                },
+                "sha256": {
+                  "type": "string",
+                  "description": "文件 SHA-256。"
+                },
+                "size": {
+                  "format": "int64",
+                  "type": "integer",
+                  "description": "字节数。"
+                },
+                "url": {
+                  "type": "string",
+                  "description": "仅当显式要求逐文件 URL 且本页不超过上限时出现。"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "invalid_paths": {
+            "description": "无法规范化、已被忽略的路径。",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "package_url": {
+            "description": "要下载的包地址。file_list 模式没有这一项。",
+            "type": "string"
+          },
+          "root_hash": {
+            "description": "目标线根哈希。",
+            "type": "string"
+          },
+          "sha256": {
+            "description": "下载文件的 SHA-256。",
+            "type": "string"
+          },
+          "signature": {
+            "description": "对双号、root_hash、package_url、size、sha256 的签名。",
+            "type": "string"
+          },
+          "size": {
+            "description": "下载字节数。",
+            "format": "int64",
+            "type": "integer"
+          },
+          "version_integer": {
+            "description": "目标整数版本号。",
+            "nullable": true,
+            "type": "integer"
+          },
+          "version_semver": {
+            "description": "目标 SemVer。",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "diff_mode",
+          "root_hash",
+          "version_integer",
+          "version_semver",
+          "channel",
+          "compare_engine"
+        ],
+        "type": "object"
+      },
+      "DiffRequest": {
+        "additionalProperties": false,
+        "description": "差量查询请求。",
+        "properties": {
+          "accepted_delta_algos": {
+            "description": "本客户端能应用的差量算法，如 hdiffpatch、bsdiff、xdelta3。",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "arch": {
+            "description": "CPU 架构。",
+            "type": "string"
+          },
+          "capabilities": {
+            "description": "能力声明：patch_package / binary_delta / file_list。",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "channel": {
+            "description": "可选。填写时必须等于目标版本渠道。",
+            "type": "string"
+          },
+          "device_id": {
+            "description": "灰度用。不会写入日志。",
+            "type": "string"
+          },
+          "hw_rev": {
+            "description": "硬件变体。",
+            "type": "string"
+          },
+          "local_sha256": {
+            "description": "本地单文件哈希。binary_delta 要求它等于官方源包哈希。",
+            "type": "string"
+          },
+          "os": {
+            "description": "操作系统。",
+            "type": "string"
+          },
+          "prefer_full": {
+            "description": "为 true 时不要差量，直接给全量包。",
+            "type": "boolean"
+          },
+          "source_version": {
+            "description": "当前版本。",
+            "type": "string"
+          },
+          "target_version": {
+            "description": "目标版本，必须与 check 选出的一致。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_version",
+          "target_version",
+          "os",
+          "arch"
+        ],
+        "type": "object"
+      },
+      "PackRequest": {
+        "additionalProperties": false,
+        "description": "打包请求。needed_paths 是无序集合，顺序和斜杠方向不影响身份。",
+        "properties": {
+          "arch": {
+            "description": "CPU 架构。",
+            "type": "string"
+          },
+          "channel": {
+            "description": "可选。填写时必须等于目标版本渠道。",
+            "type": "string"
+          },
+          "device_id": {
+            "description": "灰度用。不会写入日志。",
+            "type": "string"
+          },
+          "hw_rev": {
+            "description": "硬件变体。",
+            "type": "string"
+          },
+          "needed_paths": {
+            "description": "本地还缺的目标路径，无序集合。本地已有的 KEEP_IF_EXISTS 文件不要放进来。",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "os": {
+            "description": "操作系统。",
+            "type": "string"
+          },
+          "source_version": {
+            "description": "当前版本。",
+            "type": "string"
+          },
+          "target_version": {
+            "description": "check 给出的目标版本。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_version",
+          "target_version",
+          "os",
+          "arch"
+        ],
+        "type": "object"
+      },
+      "Pack200": {
+        "additionalProperties": false,
+        "description": "打包结果。pending 没有下载地址；ready 是补丁 zip；full_package 指向全量包。",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "目标版本所在渠道。"
+          },
+          "compare_engine": {
+            "enum": [
+              "integer",
+              "semver"
+            ],
+            "type": "string",
+            "description": "版本比较方式。"
+          },
+          "compression": {
+            "description": "归档格式，原生包是 zip。",
+            "type": "string"
+          },
+          "deleted_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "description": "应用补丁后应删除的路径。"
+          },
+          "diff_mode": {
+            "enum": [
+              "full_package",
+              "patch_package"
+            ],
+            "type": "string",
+            "description": "ready 时为 patch_package，回落全量时为 full_package。"
+          },
+          "file_name": {
+            "type": "string",
+            "description": "建议保存的文件名。"
+          },
+          "files": {
+            "description": "补丁里的文件（path + sha256）。zip 成员名是哈希。",
+            "items": {
+              "properties": {
+                "install_policy": {
+                  "type": "string",
+                  "description": "OVERWRITE 覆盖；KEEP_IF_EXISTS 本地已有则保留。"
+                },
+                "integrity_check": {
+                  "type": "boolean",
+                  "description": "KEEP 行一般为 false，升级后不要用哈希卡这些文件。"
+                },
+                "path": {
+                  "type": "string",
+                  "description": "相对安装路径，正斜杠。"
+                },
+                "sha256": {
+                  "type": "string",
+                  "description": "文件 SHA-256。"
+                },
+                "size": {
+                  "format": "int64",
+                  "type": "integer",
+                  "description": "字节数。"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "invalid_paths": {
+            "description": "无法识别、已忽略的 needed_paths。",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "package_url": {
+            "description": "ready 或 full_package 时的下载地址。pending 没有。",
+            "type": "string"
+          },
+          "root_hash": {
+            "type": "string",
+            "description": "目标线根哈希。"
+          },
+          "sha256": {
+            "type": "string",
+            "description": "下载文件的 SHA-256。"
+          },
+          "signature": {
+            "type": "string",
+            "description": "对关键字段的签名。"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer",
+            "description": "下载字节数。"
+          },
+          "status": {
+            "description": "pending：还在打包；ready：补丁可下；full_package：请改下全量包。",
+            "enum": [
+              "pending",
+              "ready",
+              "full_package"
+            ],
+            "type": "string"
+          },
+          "version_integer": {
+            "nullable": true,
+            "type": "integer",
+            "description": "目标整数版本号。"
+          },
+          "version_semver": {
+            "nullable": true,
+            "type": "string",
+            "description": "目标 SemVer。"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
+      "Error": {
+        "description": "统一错误信封：{ error: { code, message, details } }。",
+        "properties": {
+          "error": {
+            "description": "错误对象。",
+            "properties": {
+              "code": {
+                "enum": [
+                  "PROJECT_NOT_FOUND",
+                  "VERSION_NOT_FOUND",
+                  "VERSION_LINE_NOT_FOUND",
+                  "VERSION_NOT_VISIBLE",
+                  "VERSION_REVOKED",
+                  "NO_SAFE_TARGET",
+                  "INTERMEDIATE_UNAVAILABLE",
+                  "MIN_OS_NOT_MET",
+                  "CHANNEL_CONFLICT",
+                  "UNAUTHORIZED",
+                  "FORBIDDEN",
+                  "PRECONDITION_FAILED",
+                  "HW_REV_INCOMPATIBLE",
+                  "RATE_LIMITED",
+                  "CHANGELOG_QUERY_INVALID",
+                  "NOT_FOUND",
+                  "NOT_READY",
+                  "INTERNAL_ERROR",
+                  "INVALID_REQUEST",
+                  "INVALID_QUERY_PARAM",
+                  "ENGINE_MISMATCH"
+                ],
+                "type": "string",
+                "description": "本平面会返回的错误码。code 是英文稳定值。"
+              },
+              "details": {
+                "description": "可选细节。没有时可省略。"
+              },
+              "message": {
+                "type": "string",
+                "description": "给人看的说明，英文。不要依赖它做逻辑，请看 code。"
+              }
+            },
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "Integrity200": {
+        "description": "官方文件清单，用来对照本地安装。一次返回全部文件。",
+        "properties": {
+          "channel": {
+            "description": "该版本渠道。",
+            "type": "string"
+          },
+          "file_name": {
+            "description": "全量包建议文件名，不参与签名。",
+            "type": "string"
+          },
+          "files": {
+            "description": "完整文件清单。单文件线只有一项。",
+            "items": {
+              "properties": {
+                "install_policy": {
+                  "enum": [
+                    "OVERWRITE",
+                    "KEEP_IF_EXISTS"
+                  ],
+                  "type": "string",
+                  "description": "OVERWRITE 覆盖；KEEP_IF_EXISTS 本地已有则保留。"
+                },
+                "integrity_check": {
+                  "description": "KEEP 行一般为 false，升级后不要用哈希卡这些文件。",
+                  "type": "boolean"
+                },
+                "md5": {
+                  "description": "MD5。compact=true 时省略。",
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string",
+                  "description": "相对安装路径，正斜杠。"
+                },
+                "sha256": {
+                  "type": "string",
+                  "description": "文件 SHA-256。"
+                },
+                "size": {
+                  "format": "int64",
+                  "type": "integer",
+                  "description": "字节数。"
+                },
+                "url": {
+                  "description": "仅当显式要求逐文件 URL 且总文件数不超过 16 时出现。",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "size",
+                "install_policy",
+                "integrity_check"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "full_package_url": {
+            "description": "该线全量包的 SHA-256 下载地址。",
+            "type": "string"
+          },
+          "package_type": {
+            "description": "single_file 或 multi_file。",
+            "enum": [
+              "single_file",
+              "multi_file"
+            ],
+            "type": "string"
+          },
+          "root_hash": {
+            "description": "清单根哈希；单文件线可为空。",
+            "type": "string"
+          },
+          "sha256": {
+            "description": "全量包 SHA-256。",
+            "type": "string"
+          },
+          "signature": {
+            "description": "对关键字段的签名。",
+            "type": "string"
+          },
+          "size": {
+            "description": "全量包字节数。",
+            "format": "int64",
+            "type": "integer"
+          },
+          "version_integer": {
+            "description": "整数版本号。",
+            "nullable": true,
+            "type": "integer"
+          },
+          "version_semver": {
+            "description": "SemVer。",
+            "nullable": true,
+            "type": "string"
+          },
+          "volumes": {
+            "description": "若发过预切分卷则列出；否则省略。",
+            "items": {
+              "properties": {
+                "sha256": {
+                  "type": "string",
+                  "description": "文件 SHA-256。"
+                },
+                "size": {
+                  "format": "int64",
+                  "type": "integer",
+                  "description": "字节数。"
+                },
+                "url": {
+                  "type": "string",
+                  "description": "仅当显式要求逐文件 URL 且本页不超过上限时出现。"
+                }
+              },
+              "type": "object"
+            },
+            "nullable": true,
+            "type": "array"
+          }
+        },
+        "required": [
+          "version_integer",
+          "version_semver",
+          "channel",
+          "package_type",
+          "root_hash",
+          "full_package_url",
+          "file_name",
+          "size",
+          "sha256",
+          "files"
+        ],
+        "type": "object"
+      },
+      "ProjectPublic": {
+        "additionalProperties": false,
+        "description": "可以给客户端看的项目设置，不含密钥。",
+        "properties": {
+          "compare_engine": {
+            "description": "版本比较方式：semver 或 integer。",
+            "type": "string"
+          },
+          "created_at": {
+            "description": "项目创建时间（UTC）。",
+            "format": "date-time",
+            "type": "string"
+          },
+          "default_locale": {
+            "description": "默认语言。",
+            "type": "string"
+          },
+          "device_id_policy": {
+            "description": "设备标识存储策略：hashed / raw / none。",
+            "enum": [
+              "hashed",
+              "raw",
+              "none"
+            ],
+            "type": "string"
+          },
+          "force_https": {
+            "description": "是否强制 HTTPS。",
+            "type": "boolean"
+          },
+          "minimum_supported_version": {
+            "description": "最低支持版本；低于它会强制更新。",
+            "nullable": true,
+            "type": "string"
+          },
+          "require_client_token": {
+            "description": "检查更新是否必须带项目 Token。",
+            "type": "boolean"
+          },
+          "slug": {
+            "description": "项目短名，也可用在 URL 里。",
+            "type": "string"
+          },
+          "storage_visibility": {
+            "description": "public 可直链；private 下载地址带短时签名。",
+            "type": "string"
+          },
+          "updated_at": {
+            "description": "最近修改时间（UTC）。",
+            "format": "date-time",
+            "type": "string"
+          },
+          "uuid": {
+            "description": "项目 UUID。",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "StatusOutput": {
+        "additionalProperties": false,
+        "description": "探活响应。status 表示进程在；ready 表示数据库和对象存储可用。",
+        "properties": {
+          "ready": {
+            "description": "true：PostgreSQL 能 Ping，且对象存储探测键能 Head。false：尚未就绪。",
+            "type": "boolean"
+          },
+          "status": {
+            "description": "进程状态，正常为 ok。",
+            "example": "ok",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ready",
+          "status"
+        ],
+        "type": "object"
+      },
+      "UpdateCheck200": {
+        "additionalProperties": false,
+        "description": "检查更新成功体。不含更新日志。多文件不会带逐文件 URL。",
+        "properties": {
+          "artifact_signature": {
+            "description": "开发者随包携带的签名，和 signature 无关。",
+            "type": "string"
+          },
+          "compare_engine": {
+            "description": "版本比较方式：semver 或 integer。",
+            "enum": [
+              "semver",
+              "integer"
+            ],
+            "type": "string"
+          },
+          "delta_algo": {
+            "description": "仅当 delta_available 为 true。",
+            "type": "string"
+          },
+          "delta_available": {
+            "description": "可以走单文件二进制差量（非降级且客户端声明了能力）。",
+            "type": "boolean"
+          },
+          "file_name": {
+            "description": "建议保存的文件名，不参与签名。",
+            "type": "string"
+          },
+          "has_update": {
+            "description": "是否有可执行更新。",
+            "type": "boolean"
+          },
+          "is_downgrade": {
+            "description": "目标比当前更旧（吊销/下架回退）。",
+            "type": "boolean"
+          },
+          "is_mandatory": {
+            "description": "是否强制更新。强制时忽略灰度。",
+            "type": "boolean"
+          },
+          "package_type": {
+            "description": "目标是 single_file 还是 multi_file。",
+            "enum": [
+              "single_file",
+              "multi_file"
+            ],
+            "type": "string"
+          },
+          "package_url": {
+            "description": "全量包下载地址，按内容 SHA-256。",
+            "type": "string"
+          },
+          "platform_notes": {
+            "description": "目标平台的安装说明。",
+            "type": "string"
+          },
+          "publish_time": {
+            "description": "目标版本发布时间。",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "reason": {
+            "description": "为什么给这个目标：normal / minimum_supported_version / critical_version / revoked / yanked / intermediate。",
+            "enum": [
+              "normal",
+              "minimum_supported_version",
+              "critical_version",
+              "revoked",
+              "yanked",
+              "intermediate"
+            ],
+            "type": "string"
+          },
+          "root_hash": {
+            "description": "多文件目标线的根哈希；单文件为空。",
+            "type": "string"
+          },
+          "sha256": {
+            "description": "全量包 SHA-256。",
+            "type": "string"
+          },
+          "signature": {
+            "description": "对整数号、SemVer、root_hash、package_url、size、sha256 的签名。项目没配密钥则省略。",
+            "type": "string"
+          },
+          "size": {
+            "description": "全量包字节数。",
+            "format": "int64",
+            "type": "integer"
+          },
+          "target_channel": {
+            "description": "目标渠道，可能和请求的 channel 不同。",
+            "type": "string"
+          },
+          "target_hw_rev": {
+            "description": "选中的硬件变体；默认变体为 null。",
+            "nullable": true,
+            "type": "string"
+          },
+          "version_integer": {
+            "description": "目标整数版本号。",
+            "nullable": true,
+            "type": "integer"
+          },
+          "version_semver": {
+            "description": "目标 SemVer。",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "has_update",
+          "is_mandatory",
+          "is_downgrade",
+          "reason",
+          "compare_engine",
+          "version_integer",
+          "version_semver",
+          "target_channel",
+          "target_hw_rev",
+          "package_type",
+          "root_hash",
+          "package_url",
+          "file_name",
+          "size",
+          "sha256",
+          "delta_available"
+        ],
+        "type": "object"
+      },
+      "ClientReportOutput": {
+        "description": "POST /clients/report 返回的地理位置。不含名册行。",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ip",
+          "country_code",
+          "region_code",
+          "geo_i18n"
+        ],
+        "properties": {
+          "ip": {
+            "type": "string",
+            "description": "本次请求的客户端 IP。"
+          },
+          "country_code": {
+            "type": "string",
+            "description": "ISO 国家代码；查失败为空串。"
+          },
+          "region_code": {
+            "type": "string",
+            "description": "一级行政区代码；查失败为空串。"
+          },
+          "geo_i18n": {
+            "type": "object",
+            "description": "国家/地区多语言地名图。查失败为空对象。",
+            "additionalProperties": true
+          }
+        }
+      },
+      "UpdateCheckRequest": {
+        "description": "POST /update/check 请求体。",
+        "type": "object",
+        "required": [
+          "current_version",
+          "os",
+          "arch"
+        ],
+        "properties": {
+          "current_version": {
+            "type": "string",
+            "description": "客户端当前版本（整数或 SemVer）。"
+          },
+          "os": {
+            "type": "string",
+            "description": "操作系统，如 windows、linux、macos、android。别名会规范化。"
+          },
+          "arch": {
+            "type": "string",
+            "description": "CPU 架构，如 x86_64、arm64。"
+          },
+          "channel": {
+            "type": "string",
+            "description": "渠道 slug，默认 stable。"
+          },
+          "hw_rev": {
+            "type": "string",
+            "description": "硬件变体。"
+          },
+          "os_version": {
+            "type": "string",
+            "description": "系统版本，用于最低系统要求判断。"
+          },
+          "device_id": {
+            "type": "string",
+            "description": "设备标识，用于灰度和遥测。"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "能力字符串数组。已知：full_package、file_list、patch_package、binary_delta。"
+          },
+          "accepted_delta_algos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "非空即自动授予 binary_delta 能力。"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "bearerFormat": "opaque",
+        "description": "项目开启 require_client_token 时使用。Authorization: Bearer <项目客户端 Token>。与 X-Project-Token 是同一凭证，不是管理员登录。",
+        "scheme": "bearer",
+        "type": "http"
+      },
+      "channelTokenAuth": {
+        "description": "可选渠道口令。按 SHA-256 比对，不会记入日志。填错或漏填时，check 会跳过受保护渠道，不会 403。",
+        "in": "header",
+        "name": "X-Channel-Token",
+        "type": "apiKey"
+      },
+      "storeTokenAuth": {
+        "description": "独立的商店协议 Token（若配置了）。用 Authorization: Bearer 或 X-Project-Token 传递。不读取查询参数。",
+        "in": "header",
+        "name": "X-Project-Token",
+        "type": "apiKey"
+      },
+      "projectTokenAuth": {
+        "description": "项目客户端 Token，放在 X-Project-Token 或 Authorization: Bearer。",
+        "in": "header",
+        "name": "X-Project-Token",
+        "type": "apiKey"
+      }
+    }
+  },
+  "info": {
+    "description": "KiriVers 客户端平面：给软件客户端检查更新、下载安装包、校验文件、上报遥测。默认流程是 POST /update/check，有更新就下载 package_url 指向的全量或增量包。单文件差量再 POST /update/diff；多文件按文件比较增量则 GET integrity 对照本地后 POST /update/pack（同一地址轮询）。更新日志、公告、渠道/语言目录、设备 report 都是可选接口。商店协议文档走 /store/... ，不是官方 JSON 客户端。管理后台在管理平面。",
+    "title": "KiriVers Client API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.0.3",
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "description": "进程还在就返回 200。body.ready 表示数据库能 Ping、对象存储探测键能 Head。未就绪时 ready=false，HTTP 仍是 200。",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusOutput"
+                }
+              }
+            },
+            "description": "进程存活。ready 表示数据库和对象存储是否可用。"
+          }
+        },
+        "summary": "存活与就绪探测",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/openapi.json": {
+      "get": {
+        "description": "返回这份客户端平面的 OpenAPI 3.0 JSON。",
+        "responses": {
+          "200": {
+            "description": "OpenAPI JSON 文档。"
+          }
+        },
+        "summary": "本平面 OpenAPI 文档",
+        "tags": [
+          "System"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}": {
+      "get": {
+        "description": "不含密钥。用于确认项目存在、是否强制 HTTPS、是否要带客户端 Token。开启 require_client_token 时需要 Bearer 或 X-Project-Token。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectRef"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectPublic"
+                }
+              }
+            },
+            "description": "成功。"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "项目要求客户端 Token 时未提供或无效（UNAUTHORIZED）。"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "项目强制 HTTPS 但当前不是 HTTPS（FORBIDDEN）。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "项目不存在（PROJECT_NOT_FOUND）。"
+          }
+        },
+        "summary": "读取项目公开设置",
+        "tags": [
+          "Project"
+        ]
+      },
+      "options": {
+        "description": "不要求客户端 Token。Origin 匹配 cors_origins 时回写 Access-Control-Allow-*。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectRef"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "无正文。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "项目不存在（PROJECT_NOT_FOUND）。"
+          }
+        },
+        "summary": "CORS 预检",
+        "tags": [
+          "Project"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}/announcements": {
+      "get": {
+        "description": "独立接口，不塞进 check。可用 version/os/arch/locale 做匹配。没有匹配项仍返回 200，announcements 为空数组。草稿和未到展示窗口的不会出现。",
+        "parameters": [
+          {
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+            "in": "path",
+            "name": "project_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "已安装版本。省略则不匹配按版本限定的公告。",
+            "in": "query",
+            "name": "version",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "操作系统，如 windows、linux、macos、android。别名会规范化。",
+            "in": "query",
+            "name": "os",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "CPU 架构，如 x86_64、arm64。",
+            "in": "query",
+            "name": "arch",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "语言。省略时按 Accept-Language 和项目默认回落。",
+            "in": "query",
+            "name": "locale",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Accept-Language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-None-Match",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "announcements": {
+                      "items": {
+                        "$ref": "#/components/schemas/ClientAnnouncement"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "按管理端排序返回当前可见公告。空列表也是成功。",
+            "headers": {
+              "Cache-Control": {
+                "description": "公开缓存：s-maxage 取项目设置与下一发布时间窗口的较小值，并允许 stale-while-revalidate=30",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Vary": {
+                "description": "Vary 含 Accept-Encoding；需要 Token 时加 Authorization；未指定 locale 时加 Accept-Language；Markdown 展开 ${site_url} 时加 Referer。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "ETag 命中，无正文。"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "查询参数不合法（INVALID_QUERY_PARAM）。"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "项目要求客户端 Token 时未提供或无效（UNAUTHORIZED）。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "项目不存在（PROJECT_NOT_FOUND）。"
+          }
+        },
+        "summary": "列出当前可见公告",
+        "tags": [
+          "Announcements"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}/channels": {
+      "get": {
+        "description": "只返回已启用、未隐藏、不需要渠道口令的渠道。空列表仍是 200。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectRef"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientChannelList"
+                }
+              }
+            },
+            "description": "成功。"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "未授权（UNAUTHORIZED）。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "项目不存在（PROJECT_NOT_FOUND）。"
+          }
+        },
+        "summary": "列出公开渠道",
+        "tags": [
+          "Catalog"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}/store/{protocol}/{listing_slug}": {
+      "get": {
+        "description": "按协议和 listing slug 输出商店文档，例如 Sparkle appcast。旧的两段路径（把文档名当成 slug）会纯文本 404。listing 钉死的 os/arch/channel 会覆盖冲突的查询参数。",
+        "parameters": [
+          {
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+            "in": "path",
+            "name": "project_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "商店协议名，如 sparkle、winget。",
+            "in": "path",
+            "name": "protocol",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "商店 listing 的 slug。",
+            "in": "path",
+            "name": "listing_slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "渠道 slug，默认 stable。",
+            "in": "query",
+            "name": "channel",
+            "schema": {
+              "default": "stable",
+              "type": "string"
+            }
+          },
+          {
+            "description": "操作系统，如 windows、linux、macos、android。别名会规范化。",
+            "in": "query",
+            "name": "os",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "CPU 架构，如 x86_64、arm64。",
+            "in": "query",
+            "name": "arch",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "硬件变体。",
+            "in": "query",
+            "name": "hw_rev",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "客户端当前版本（整数或 SemVer）。",
+            "in": "query",
+            "name": "current_version",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "更新日志语言，优先于 locale。",
+            "in": "query",
+            "name": "changelog_locale",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "语言。省略时按 Accept-Language 和项目默认回落。",
+            "in": "query",
+            "name": "locale",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "浏览器语言，省略 locale 时用来回落。",
+            "in": "header",
+            "name": "Accept-Language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "上次的 ETag。未变化时返回 304。",
+            "in": "header",
+            "name": "If-None-Match",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/appinstaller+xml; charset=utf-8": {
+                "description": "Windows App Installer 的 .appinstaller XML。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/json; charset=utf-8": {
+                "description": "Tauri 更新 JSON（动态对象或静态 latest.json），或 WinGet REST JSON。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/x-ms-application; charset=utf-8": {
+                "description": "ClickOnce 的 .application 部署 XML。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/x-zsync": {
+                "description": "AppImageUpdate 的 .zsync 控制文件。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/xml; charset=utf-8": {
+                "description": "Sparkle 的 appcast XML。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/yaml; charset=utf-8": {
+                "description": "electron-updater 通用 latest.yml：version、path、sha512、size、releaseDate 以及单条 files。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/plain; charset=utf-8": {
+                "description": "Squirrel Windows RELEASES：每行一条匿名可见版本，新到旧。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "所请求协议的商店文档。Sparkle appcast 是带 sparkle 命名空间的 RSS 2.0：每条含 title、pubDate、sparkle:version，以及一个 enclosure（稳定文件名 URL、大小、类型）和 sparkle:edSignature。",
+            "headers": {
+              "Cache-Control": {
+                "description": "公开项目可 CDN 缓存；私有存储为 private, no-store（签名 URL 必须新鲜）。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "description": "强 ETag：渲染正文 SHA-256 的前 16 字节十六进制。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Vary": {
+                "description": "Vary: Accept-Encoding。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Tauri 动态端点：客户端已是最新匿名可见版本，或当前版本服务器不认识。无正文、无 ETag。Sparkle 这类列表文档不会返回 204。"
+          },
+          "304": {
+            "description": "If-None-Match 命中。私有存储项目会跳过 304，以便每次拿到新的签名 URL。"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "渠道未知或缺少 os/arch（INVALID_QUERY_PARAM）。"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "开启了客户端 Token 或商店 Token，但凭证无效（UNAUTHORIZED）。"
+          },
+          "404": {
+            "description": "纯文本 404：未知协议或该项目未启用此商店 listing。正文不会是通用 zip。项目不存在时返回 JSON PROJECT_NOT_FOUND。"
+          }
+        },
+        "summary": "商店协议文档（无文档名）",
+        "tags": [
+          "Store"
+        ]
+      },
+      "post": {
+        "description": "部分协议用 POST 查清单，例如 WinGet manifestSearch。鉴权和 GET 相同。",
+        "parameters": [
+          {
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+            "in": "path",
+            "name": "project_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "商店协议名，如 sparkle、winget。",
+            "in": "path",
+            "name": "protocol",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "商店 listing 的 slug。",
+            "in": "path",
+            "name": "listing_slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "description": "该协议自己的查询体，例如 WinGet 搜索。",
+                "type": "object"
+              }
+            }
+          },
+          "description": "该协议自己的查询体。",
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "WinGet manifestSearch 的 JSON，Data 数组包在里面。"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "开启了客户端 Token 或商店 Token，但凭证无效（UNAUTHORIZED）。"
+          },
+          "404": {
+            "description": "纯文本 404：未知协议或该项目未启用此商店 listing。"
+          }
+        },
+        "summary": "商店协议查询（无文档名）",
+        "tags": [
+          "Store"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}/store/{protocol}/{listing_slug}/{doc}": {
+      "get": {
+        "description": "路径形如 /store/sparkle/default/appcast.xml。没有 listing slug 的旧路径返回纯文本 404。文档里的 enclosure 指向全量包的 SHA-256 下载地址。未知协议或未启用的 listing 也是纯文本 404。",
+        "parameters": [
+          {
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+            "in": "path",
+            "name": "project_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "商店协议名，如 sparkle、winget。",
+            "in": "path",
+            "name": "protocol",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "商店 listing 的 slug。",
+            "in": "path",
+            "name": "listing_slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "协议文档名，如 appcast.xml。",
+            "in": "path",
+            "name": "doc",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "渠道 slug，默认 stable。",
+            "in": "query",
+            "name": "channel",
+            "schema": {
+              "default": "stable",
+              "type": "string"
+            }
+          },
+          {
+            "description": "操作系统，如 windows、linux、macos、android。别名会规范化。",
+            "in": "query",
+            "name": "os",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "CPU 架构，如 x86_64、arm64。",
+            "in": "query",
+            "name": "arch",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "硬件变体。",
+            "in": "query",
+            "name": "hw_rev",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "客户端当前版本（整数或 SemVer）。",
+            "in": "query",
+            "name": "current_version",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "更新日志语言，优先于 locale。",
+            "in": "query",
+            "name": "changelog_locale",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "语言。省略时按 Accept-Language 和项目默认回落。",
+            "in": "query",
+            "name": "locale",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "浏览器语言，省略 locale 时用来回落。",
+            "in": "header",
+            "name": "Accept-Language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "上次的 ETag。未变化时返回 304。",
+            "in": "header",
+            "name": "If-None-Match",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/appinstaller+xml; charset=utf-8": {
+                "description": "Windows App Installer 的 .appinstaller XML。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/json; charset=utf-8": {
+                "description": "Tauri 更新 JSON（动态对象或静态 latest.json），或 WinGet REST JSON。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/x-ms-application; charset=utf-8": {
+                "description": "ClickOnce 的 .application 部署 XML。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/x-zsync": {
+                "description": "AppImageUpdate 的 .zsync 控制文件。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/xml; charset=utf-8": {
+                "description": "Sparkle 的 appcast XML。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/yaml; charset=utf-8": {
+                "description": "electron-updater 通用 latest.yml：version、path、sha512、size、releaseDate 以及单条 files。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/plain; charset=utf-8": {
+                "description": "Squirrel Windows RELEASES：每行一条匿名可见版本，新到旧。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "所请求协议的商店文档。Sparkle appcast 是带 sparkle 命名空间的 RSS 2.0：每条含 title、pubDate、sparkle:version，以及一个 enclosure（稳定文件名 URL、大小、类型）和 sparkle:edSignature。",
+            "headers": {
+              "Cache-Control": {
+                "description": "公开项目可 CDN 缓存；私有存储为 private, no-store（签名 URL 必须新鲜）。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "description": "强 ETag：渲染正文 SHA-256 的前 16 字节十六进制。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Vary": {
+                "description": "Vary: Accept-Encoding。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Tauri 动态端点：客户端已是最新匿名可见版本，或当前版本服务器不认识。无正文、无 ETag。Sparkle 这类列表文档不会返回 204。"
+          },
+          "304": {
+            "description": "If-None-Match 命中。私有存储项目会跳过 304，以便每次拿到新的签名 URL。"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "渠道未知或缺少 os/arch（INVALID_QUERY_PARAM）。"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "开启了客户端 Token 或商店 Token，但凭证无效（UNAUTHORIZED）。"
+          },
+          "404": {
+            "description": "纯文本 404：未知协议或该项目未启用此商店 listing。正文不会是通用 zip。项目不存在时返回 JSON PROJECT_NOT_FOUND。"
+          }
+        },
+        "summary": "商店协议文档",
+        "tags": [
+          "Store"
+        ]
+      },
+      "post": {
+        "description": "例如 WinGet 的 /manifestSearch。请求体由该协议定义，不是本平面的 JSON 信封。",
+        "parameters": [
+          {
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+            "in": "path",
+            "name": "project_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "商店协议名，如 sparkle、winget。",
+            "in": "path",
+            "name": "protocol",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "商店 listing 的 slug。",
+            "in": "path",
+            "name": "listing_slug",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "协议文档名，如 appcast.xml。",
+            "in": "path",
+            "name": "doc",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "description": "该协议自己的查询体，例如 WinGet 搜索。",
+                "type": "object"
+              }
+            }
+          },
+          "description": "该协议自己的查询体。",
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json; charset=utf-8": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "WinGet manifestSearch 的 JSON，Data 数组包在里面。"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "开启了客户端 Token 或商店 Token，但凭证无效（UNAUTHORIZED）。"
+          },
+          "404": {
+            "description": "纯文本 404：未知协议或该项目未启用此商店 listing。"
+          }
+        },
+        "summary": "商店协议查询",
+        "tags": [
+          "Store"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}/languages": {
+      "get": {
+        "description": "给客户端选语言用。不含 project_id。空列表仍是 200。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectRef"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientLanguageList"
+                }
+              }
+            },
+            "description": "成功。"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "项目要求客户端 Token 时未提供或无效（UNAUTHORIZED）。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "项目不存在（PROJECT_NOT_FOUND）。"
+          }
+        },
+        "summary": "列出项目语言",
+        "tags": [
+          "Catalog"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}/matrix": {
+      "get": {
+        "description": "每行是 os、arch、package_type。检查更新时 check 也会带回当前目标的 package_type。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectRef"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientMatrixList"
+                }
+              }
+            },
+            "description": "成功。"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "未授权（UNAUTHORIZED）。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "项目不存在（PROJECT_NOT_FOUND）。"
+          }
+        },
+        "summary": "列出平台矩阵",
+        "tags": [
+          "Catalog"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}/media/{id}": {
+      "get": {
+        "description": "按媒体 UUID 取文件。更新日志和公告里的图片走这里，不是安装包下载。",
+        "parameters": [
+          {
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+            "in": "path",
+            "name": "project_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "媒体 UUID。",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "HTTP Range，按字节区间下载。",
+            "in": "header",
+            "name": "Range",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "原始字节和元数据里的 Content-Type。",
+            "headers": {
+              "Accept-Ranges": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "description": "长期缓存：public, max-age=31536000, immutable。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Disposition": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "206": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "部分字节区间。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "对象或项目不存在。"
+          }
+        },
+        "summary": "下载 Markdown 配图",
+        "tags": [
+          "Media"
+        ]
+      },
+      "head": {
+        "description": "与 GET 相同的鉴权和校验头，不返回正文。",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。"
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "description": "媒体 UUID。"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "只返回响应头。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "对象或项目不存在。"
+          }
+        },
+        "summary": "探测 Markdown 配图",
+        "tags": [
+          "Media"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}/packages/{ref}": {
+      "get": {
+        "description": "按内容 SHA-256 下载全量或增量（kind=full / delta / patch / file 等）。路径里是内容哈希（可带扩展名）。按文件名或产物 UUID 下载已取消。私有项目的 URL 需要 ?exp=&sig=。支持 Range。",
+        "parameters": [
+          {
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+            "in": "path",
+            "name": "project_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "内容 SHA-256（可带扩展名）。不是文件名。",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "硬件变体。",
+            "in": "query",
+            "name": "hw_rev",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "HTTP Range，按字节区间下载，例如 bytes=0-1048575。",
+            "in": "header",
+            "name": "Range",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "description": "安装包字节。",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "完整产物下载（全量或增量）。"
+          },
+          "206": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "description": "部分字节区间。",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "按字节区间返回内容。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "没有这个 SHA-256，或格式不对（NOT_FOUND）。"
+          }
+        },
+        "summary": "按 SHA-256 下载全量或增量",
+        "tags": [
+          "Download"
+        ]
+      },
+      "head": {
+        "description": "按内容 SHA-256 下载全量或增量（kind=full / delta / patch / file 等）。路径里是内容哈希（可带扩展名）。按文件名或产物 UUID 下载已取消。私有项目的 URL 需要 ?exp=&sig=。支持 Range。",
+        "parameters": [
+          {
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+            "in": "path",
+            "name": "project_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "内容 SHA-256（可带扩展名）。不是文件名。",
+            "in": "path",
+            "name": "ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "只探测响应头。私有存储项目仍需要 exp/sig。"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "私有存储项目缺少、过期或无效的 exp/sig 下载签名（FORBIDDEN）。"
+          }
+        },
+        "summary": "按 SHA-256 下载全量或增量",
+        "tags": [
+          "Download"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}/telemetry/report": {
+      "post": {
+        "description": "成功一律 202，不要因为上报失败卡住更新。必填 os、arch、channel、from_version、to_version、status。device_id 可选。超限返回 429 RATE_LIMITED。",
+        "parameters": [
+          {
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+            "in": "path",
+            "name": "project_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "arch": {
+                    "type": "string"
+                  },
+                  "channel": {
+                    "type": "string"
+                  },
+                  "device_id": {
+                    "description": "原始设备号，可选。按项目 device_id_policy 存储，不会写入日志。",
+                    "type": "string"
+                  },
+                  "diff_mode": {
+                    "enum": [
+                      "full_package",
+                      "patch_package",
+                      "binary_delta",
+                      "file_list"
+                    ],
+                    "type": "string"
+                  },
+                  "error_code": {
+                    "type": "string"
+                  },
+                  "error_message": {
+                    "type": "string"
+                  },
+                  "from_version": {
+                    "type": "string"
+                  },
+                  "os": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "downloading",
+                      "applying",
+                      "installed",
+                      "failed",
+                      "rolled_back"
+                    ],
+                    "type": "string"
+                  },
+                  "to_version": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "os",
+                  "arch",
+                  "channel",
+                  "from_version",
+                  "to_version",
+                  "status"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "description": "更新进度上报。",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "事件已接受。遥测失败不应卡住更新。"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "校验失败：缺字段或未知 status。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "Project not found."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "过于频繁（RATE_LIMITED），带 Retry-After。"
+          }
+        },
+        "summary": "上报更新进度",
+        "tags": [
+          "Telemetry"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}/update/check": {
+      "post": {
+        "description": "JSON 体必填 current_version、os、arch。200 有可执行更新并带全量包地址；204 已是最新；304 是 ETag 命中。GET 本路径 404。capabilities 与 accepted_delta_algos 为字符串数组。默认下一步：下载 package_url。单文件差量再调 POST /update/diff；多文件比较增量再调 GET integrity 和 POST /update/pack。",
+        "parameters": [
+          {
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+            "in": "path",
+            "name": "project_ref",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "description": "与当前目录 ETag 比对。命中一律 304，不管本来会是 200 还是 204。",
+            "in": "header",
+            "name": "If-None-Match",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "隐藏渠道的密钥，按 SHA-256 比对。缺了或错了只会跳过这些渠道，检查更新不会因此 403。",
+            "in": "header",
+            "name": "X-Channel-Token",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateCheck200"
+                }
+              }
+            },
+            "description": "可执行更新（普通、强制、中继或降级）。",
+            "headers": {
+              "Cache-Control": {
+                "description": "private, max-age=0, must-revalidate（私有存储或本机代拉为 private, no-store）。不再使用 public s-maxage。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "description": "版本目录快照的强 ETag，不含 device_id。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Vary": {
+                "description": "Vary 含 Accept-Encoding；需要客户端 Token 时加 Authorization；目录里有密钥渠道时加 X-Channel-Token。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "没有更新：当前已是最新可见版本，且未被吊销或下架。",
+            "headers": {
+              "Cache-Control": {
+                "description": "private, max-age=0, must-revalidate（私有存储或本机代拉为 private, no-store）。不再使用 public s-maxage。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "description": "版本目录快照的强 ETag，不含 device_id。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Vary": {
+                "description": "Vary 含 Accept-Encoding；需要客户端 Token 时加 Authorization；目录里有密钥渠道时加 X-Channel-Token。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "ETag 命中（200 和 204 两种状态都适用），无正文。"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "JSON 缺少 current_version、os 或 arch（INVALID_QUERY_PARAM）；current_version 无法解析（ENGINE_MISMATCH）。GET 本路径 404。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "VERSION_NOT_FOUND."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "没有安全目标、中间包不可用或系统版本不够。错误恒为 private, no-store，避免 CDN 把错误当成 204。"
+          }
+        },
+        "summary": "检查是否有更新",
+        "tags": [
+          "Update"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCheckRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_ref}/update/diff": {
+      "post": {
+        "description": "只做查找，不会排队打包。用于 binary_delta、少量文件的 file_list，或预生成的 patch_package。多文件按本地文件比较后打包请用 POST /update/pack。指定目标未进灰度且不是强制更新时 412。降级目标不会给二进制差量。",
+        "parameters": [
+          {
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+            "in": "path",
+            "name": "project_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiffRequest"
+              }
+            }
+          },
+          "description": "本地文件身份和能力协商。",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Diff200"
+                }
+              }
+            },
+            "description": "这一对源/目标版本的差量方案（含 file_list 例外）。",
+            "headers": {
+              "Cache-Control": {
+                "description": "恒为 private, no-store。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "字段缺失或不合法（INVALID_QUERY_PARAM），或渠道冲突（CHANNEL_CONFLICT）。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "源或目标版本不存在、草稿/未 stamp 不可见，或没有就绪的平台线。"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "目标版本已吊销（VERSION_REVOKED）。恒为 private, no-store。"
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "指定目标并非强制，且灰度未命中（PRECONDITION_FAILED）。"
+          }
+        },
+        "summary": "查询单文件差量方案",
+        "tags": [
+          "Update"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}/update/pack": {
+      "post": {
+        "description": "多文件比较增量的接口。第一次没有现成包就入队；之后用同一 JSON 再 POST 这里轮询。pending（202）还没有下载地址；ready 是补丁 zip；full_package 请改下全量包。不要调用管理面的 Job 接口。",
+        "parameters": [
+          {
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+            "in": "path",
+            "name": "project_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PackRequest"
+              }
+            }
+          },
+          "description": "需要打包的路径和版本身份。",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pack200"
+                }
+              }
+            },
+            "description": "缓存命中为 ready；未知路径、体积门限或失败任务为 full_package。",
+            "headers": {
+              "Cache-Control": {
+                "description": "恒为 private, no-store。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pack200"
+                }
+              }
+            },
+            "description": "正在打包。用同一请求体再次 POST 本接口。还没有 package_url。",
+            "headers": {
+              "Cache-Control": {
+                "description": "恒为 private, no-store。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "查询不合法或渠道冲突。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "版本不存在、草稿/未 stamp 不可见，或没有平台线。"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "VERSION_REVOKED."
+          },
+          "412": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "指定的非强制目标灰度未命中（PRECONDITION_FAILED）。"
+          }
+        },
+        "summary": "按文件集合打包或查询进度",
+        "tags": [
+          "Update"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}/versions/{version}/integrity": {
+      "get": {
+        "description": "用来对照本地文件。一次返回全部文件，没有 cursor/limit。草稿不可见；已吊销返回 409 且不含下载地址。ETag 等于该平台线的 root_hash。单文件线 files 只有一项。修复下载默认用 top-level 的 full_package_url。",
+        "parameters": [
+          {
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+            "in": "path",
+            "name": "project_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "已安装版本。省略则不匹配按版本限定的公告。",
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "操作系统，如 windows、linux、macos、android。别名会规范化。",
+            "in": "query",
+            "name": "os",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "CPU 架构，如 x86_64、arm64。",
+            "in": "query",
+            "name": "arch",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "清单里返回哪些哈希。非法值 400。",
+            "in": "query",
+            "name": "hash_algo",
+            "schema": {
+              "default": "sha256",
+              "enum": [
+                "sha256",
+                "md5",
+                "both"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "为 true 时不返回 md5。",
+            "in": "query",
+            "name": "compact",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "为 true 且总文件数不超过 16 时，给每条文件一个下载 URL。",
+            "in": "query",
+            "name": "include_file_urls",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "硬件变体。",
+            "in": "query",
+            "name": "hw_rev",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "渠道 slug，默认 stable。",
+            "in": "query",
+            "name": "channel",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Integrity200"
+                }
+              }
+            },
+            "description": "完整文件清单，以及全量包身份和签名。没有 cursor/limit。",
+            "headers": {
+              "Cache-Control": {
+                "description": "缓存规则与公开的检查更新相同。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "description": "强 ETag 是该平台线的 root_hash；单文件线回落到全量包 SHA-256。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Vary": {
+                "description": "规则与检查更新相同。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "If-None-Match 命中该线 root_hash。无正文，仍带 ETag 和 Cache-Control。",
+            "headers": {
+              "Cache-Control": {
+                "description": "缓存规则与公开的检查更新相同。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "description": "强 ETag 是该平台线的 root_hash；单文件线回落到全量包 SHA-256。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Vary": {
+                "description": "规则与检查更新相同。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "缺少 os/arch 或 hash_algo 不合法（INVALID_QUERY_PARAM），或渠道冲突（CHANNEL_CONFLICT）。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "版本不存在、草稿不可见，或没有平台线。"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "版本已吊销（VERSION_REVOKED）。错误体不含任何下载地址。恒为 private, no-store。"
+          }
+        },
+        "summary": "获取官方文件清单",
+        "tags": [
+          "Update"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}/clients/report": {
+      "post": {
+        "description": "写入设备名册和 custom JSON，并按 IP 查 GeoIP。200 只返回 ip 与地理位置。check 带 device_id 只会更新运行字段，不会覆盖 custom。项目 device_id_policy=none 时返回 400。不会记录明文 device_id。",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectRef"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientLoginInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientReportOutput"
+                }
+              }
+            },
+            "description": "地理位置（无 client 包装）。"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "请求体不合法（INVALID_REQUEST）。"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "项目要求客户端 Token 时未提供或无效（UNAUTHORIZED）。"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "项目不存在（PROJECT_NOT_FOUND）。"
+          }
+        },
+        "summary": "上报设备与地理位置",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_ref}/changelog/{channel}/{os}/{arch}": {
+      "get": {
+        "description": "唯一返回 changelog 正文的原生接口。check 不会带日志。路径指定渠道与平台。from_version 可选：省略时返回最新 default_entries 条；带 from_version 时取 (from, to] 再按新到旧截到 max_entries，HTTP 200。未知渠道 400；渠道 Token 不匹配 404 NOT_FOUND。",
+        "parameters": [
+          {
+            "description": "项目 UUID、当前 slug，或未过期的 slug 别名。过期别名返回 404 PROJECT_NOT_FOUND。",
+            "in": "path",
+            "name": "project_ref",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "description": "渠道 slug。未知渠道 400 INVALID_QUERY_PARAM。",
+            "in": "path",
+            "name": "channel",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "description": "操作系统，如 windows、linux、macos、android。别名会规范化。",
+            "in": "path",
+            "name": "os",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "description": "CPU 架构，如 x86_64、arm64。",
+            "in": "path",
+            "name": "arch",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          },
+          {
+            "description": "日志范围起点（不含该版本）。省略则返回最新若干条。",
+            "in": "query",
+            "name": "from_version",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "日志范围终点。省略时为该渠道最高可见版本。",
+            "in": "query",
+            "name": "to_version",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "日志范围：range_all（全部）、range_platform（该平台有包的版本）、target_only（只看目标版本）。",
+            "in": "query",
+            "name": "changelog_scope",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "range_all",
+                "range_platform",
+                "target_only"
+              ]
+            }
+          },
+          {
+            "description": "排版：aggregated 汇总、structured 按版本、both 两者都要。",
+            "in": "query",
+            "name": "changelog_layout",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "aggregated",
+                "structured",
+                "both"
+              ]
+            }
+          },
+          {
+            "description": "是否包含已吊销版本的历史日志。",
+            "in": "query",
+            "name": "changelog_include_revoked",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "是否附上该平台线的说明。",
+            "in": "query",
+            "name": "changelog_include_platform_notes",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "更新日志语言，优先于 locale。",
+            "in": "query",
+            "name": "changelog_locale",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "语言。省略时用项目默认。不读 Accept-Language。",
+            "in": "query",
+            "name": "locale",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "上次的 ETag。未变化时返回 304。",
+            "in": "header",
+            "name": "If-None-Match",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Token 保护渠道的密钥。不匹配返回 404 NOT_FOUND。",
+            "in": "header",
+            "name": "X-Channel-Token",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "changelog": {
+                      "description": "汇总后的 Markdown。layout 为 aggregated 或 both 时出现。",
+                      "type": "string"
+                    },
+                    "changelog_versions": {
+                      "items": {
+                        "$ref": "#/components/schemas/ChangelogVersion"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "按范围和排版返回的更新日志。",
+            "headers": {
+              "Cache-Control": {
+                "description": "公开缓存使用项目的 s-maxage；出错则为 private, no-store。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "description": "截断后的日志条目集合的强 ETag（含版本、状态和正文）。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Vary": {
+                "description": "Vary 含 Accept-Encoding；需要 Token 时加 Authorization；Token 保护渠道加 X-Channel-Token。不按 Referer 或 Accept-Language 拆缓存。${site_url} 只按请求 origin 展开。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "日志 ETag 命中，无正文。"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "日志查询参数不合法（CHANGELOG_QUERY_INVALID）。"
+          },
+          "404": {
+            "description": "项目不存在（PROJECT_NOT_FOUND）、版本未知（VERSION_NOT_FOUND）或渠道 Token 不匹配（NOT_FOUND）。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "summary": "按渠道与平台取更新日志",
+        "tags": [
+          "Update"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "description": "本平面 HTTP 监听地址（客户端默认 :8080）。",
+      "url": "/"
+    }
+  ],
+  "tags": [
+    {
+      "name": "System",
+      "description": "进程探活（含 ready 字段）和本平面 OpenAPI 文档。"
+    },
+    {
+      "name": "Project",
+      "description": "项目公开设置（无密钥、无显示名、无统计）。"
+    },
+    {
+      "name": "Auth",
+      "description": "设备上报或登记。不会签发会话 Token。"
+    },
+    {
+      "name": "Catalog",
+      "description": "公开渠道、平台矩阵和语言目录。"
+    },
+    {
+      "name": "Update",
+      "description": "检查更新（POST）、更新日志、文件清单和差量。"
+    },
+    {
+      "name": "Download",
+      "description": "按内容 SHA-256 下载全量或增量。UUID 旧路径未注册。"
+    },
+    {
+      "name": "Manifest",
+      "description": "官方文件清单和 root_hash。"
+    },
+    {
+      "name": "Announcements",
+      "description": "定时公告。与检查更新、更新日志分开。"
+    },
+    {
+      "name": "Telemetry",
+      "description": "客户端遥测事件。"
+    },
+    {
+      "name": "Store",
+      "description": "第三方商店协议文档（Sparkle、electron-updater 等）。"
+    },
+    {
+      "name": "Media",
+      "description": "按 UUID 下载 Markdown 配图。不需要项目 Token，也不做 URL 签名。"
+    }
+  ]
+}

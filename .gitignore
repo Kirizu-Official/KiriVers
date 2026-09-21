@@ -1,0 +1,55 @@
+# 本地运行时配置（可含密钥）；模板见 *-example.yaml
+configs/config.yaml
+configs/admin.yaml
+configs/client.yaml
+configs/sdk-fixture.json
+configs/sdk-admin-totp.txt
+
+# 本地对象存储、滚动日志与部署数据
+data/
+logs/
+dev/docker/data/
+deploy/.env
+deploy/data/
+deploy/config.zip
+
+# 本地编译出的二进制
+/app
+
+# sdk/* 孤儿分支的本地 worktree（发版脚本用，绝不 checkout 到主工作树）
+.worktrees/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+dist/
+vendor/
+
+# Python（dev/build 的维护者 CLI）
+__pycache__/
+*.pyc
+
+# 编辑器 / OS / Agent
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.zcode/
+.cursor/
+.openai/
+.agent/
+.qoder/
+.trellis/
+!.trellis/spec/
+
+# 前端
+node_modules/
+
+website/.vitepress/cache
+website/docs/public/openapi/*.json

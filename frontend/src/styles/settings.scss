@@ -1,0 +1,30 @@
+/**
+ * src/styles/settings.scss
+ *
+ * Configures SASS variables and Vuetify overwrites
+ */
+
+@use 'vuetify/settings' with (
+  // 颜色工具类（text-primary / bg-* 等）由 Tailwind @theme 映射主题色生成，保持关闭避免重复。
+  // $utilities 必须保持默认（不传即完整工具类层：d-flex、fill-height、text-h*、
+  // text-medium-emphasis、间距、圆角等）——页面大量使用这些类；传布尔值会破坏其内部 map 合并。
+  $color-pack: false,
+
+  $heading-font-family: var(--font-heading),
+  $body-font-family: var(--font-body),
+
+  $grid-breakpoints: (
+    'xs': 0,
+    'sm': 600px,
+    'md': 840px,
+    'lg': 1145px,
+    'xl': 1545px,
+    'xxl': 2138px,
+  ),
+  $container-max-widths: (
+    'md': 700px,
+    'lg': 1000px,
+    'xl': 1400px,
+    'xxl': 2000px,
+  ),
+);

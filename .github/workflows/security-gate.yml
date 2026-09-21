@@ -1,0 +1,103 @@
+name: Security Gate
+
+# State machine around the merge labels:
+#   * synchronize  -> unconditionally revoke 'wait-merge' and 'ready-merge'
+#                      (anti-stale-bypass, REQ-4.1);
+#   * Gosec Scan completed -> promote to 'ready-merge' on a clean scan, or
+#                      block with a warning comment on HIGH/CRITICAL findings
+#                      (REQ-4.2 / REQ-4.3).
+#
+# SECURITY: every trigger here runs with a write token from the base branch, so
+# this workflow checks out and executes NOTHING — no checkout, no toolchain, no
+# project code. The Gosec scan over untrusted pull request code lives in
+# gosec-scan.yml, which runs on the `pull_request` event (zero secrets,
+# read-only token) and reports back through the workflow_run event
+# (design.md §3.2: pull_request_target workflows never pull external code).
+# All payload values reach the shell through `env:` only (design.md §3.2).
+on:
+  pull_request_target:
+    types: [synchronize]
+    branches: [main]
+  workflow_run:
+    workflows: [Gosec Scan]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # Anti-stale safety guard: when new code is pushed, revoke labels to force
+  # a fresh maintainer review and a fresh Gosec scan.
+  revoke-stale-labels:
+    name: Revoke Stale Labels
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: security-gate-revoke-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Revoke merge labels on new push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -eu
+          echo "PR #$PR has new commits. Removing stale ready-merge and wait-merge labels..."
+          gh pr edit "$PR" --remove-label "ready-merge,wait-merge" || true
+
+  # Scan verdict handler: reacts to a finished Gosec Scan run and moves the
+  # label. Skipped (and exits 0) for every completion that is not a scan of a
+  # pull request that still carries 'wait-merge' — including the case where a
+  # synchronize between scan start and scan end already revoked the label.
+  promote-after-scan:
+    name: Promote or Block Merge Label
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    # Least privilege for this job: it only reads the finished run's jobs and
+    # edits labels/comments on the PR. No checkout, so no contents needed.
+    permissions:
+      pull-requests: write
+      actions: read
+    concurrency:
+      group: security-gate-promote-${{ github.event.workflow_run.head_sha }}
+      cancel-in-progress: false
+    steps:
+      - name: Evaluate scan verdict and move the label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -eu
+          # Which main-based PR is this commit the head of? The commits/{sha}/pulls
+          # endpoint also resolves commits that live in fork object stores.
+          pr=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+            --jq '[.[] | select(.base.ref == "main")] | .[0].number // empty')
+          if [ -z "$pr" ]; then
+            echo "No main-based pull request found for $HEAD_SHA; nothing to do."
+            exit 0
+          fi
+          labels=$(gh pr view "$pr" --json labels --jq '.labels | map(.name) | join(",")')
+          case ",$labels," in
+            *,wait-merge,*) ;;
+            *) echo "PR #$pr no longer carries wait-merge (revoked or renamed); leaving labels untouched." ; exit 0 ;;
+          esac
+          conclusion=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" \
+            --jq '.workflow_jobs[] | select(.name == "Gosec Security Analysis") | .conclusion' | tail -n 1)
+          case "$conclusion" in
+          success)
+            gh pr edit "$pr" --remove-label "wait-merge" --add-label "ready-merge"
+            gh pr comment "$pr" --body "✅ **Gosec 安全审计通过**：未发现高危或致命安全隐患，PR 标签已自动流转为 \`ready-merge\`。审计详情：$RUN_URL"
+            ;;
+          failure)
+            # Block the promotion loudly but keep 'wait-merge' so a maintainer
+            # can re-trigger the scan after fixing (or removing) the findings.
+            gh pr comment "$pr" --body "❌ **Gosec 安全审计未通过**：发现 HIGH/CRITICAL 级别安全问题，已阻止 \`ready-merge\` 晋升。请修复后重新打标签触发复检。审计日志：$RUN_URL"
+            ;;
+          *)
+            echo "Gosec job conclusion '$conclusion' is not terminal-success/failure; leaving labels untouched."
+            ;;
+          esac

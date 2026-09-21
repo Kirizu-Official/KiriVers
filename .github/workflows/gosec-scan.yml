@@ -1,0 +1,64 @@
+name: Gosec Scan
+
+# REQ-4.2: when a maintainer marks a pull request into main with 'wait-merge',
+# the Go code is statically analysed with Gosec.
+#
+# SECURITY: this is the scan half of the security gate, and it runs on the
+# untrusted `pull_request` event on purpose. A `pull_request` context carries
+# no repository secrets and a read-only token for fork PRs, so executing the
+# gosec toolchain over the contributor's code cannot exfiltrate credentials or
+# write anything back. The write half (label promotion) lives in
+# security-gate.yml and reacts to this workflow through `workflow_run`; it never
+# checks out or runs pull request code itself (design.md §3.2).
+on:
+  pull_request:
+    types: [labeled]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gosec-scan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gosec:
+    name: Gosec Security Analysis
+    # Only a maintainer applying 'wait-merge' starts a scan. Adding labels
+    # already requires write access to the repository; the association check
+    # is belt-and-braces on top of that.
+    if: |
+      github.event.label.name == 'wait-merge' &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.sender.association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Egress hardening
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      # Default checkout of a pull_request run is the PR merge ref: the scan
+      # covers the exact code that would land on main. Safe in this context
+      # because nothing here can reach a secret or a write token.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run Gosec Security Scanner
+        uses: securego/gosec@master
+        with:
+          args: '-no-fail -fmt sarif -out gosec.sarif ./...'
+
+      - name: Evaluate Security Findings
+        run: |
+          set -eu
+          # Gosec maps HIGH (and CRITICAL) issues onto SARIF level "error";
+          # MEDIUM lands on "warning" and does not block the promotion.
+          if grep -q '"level": "error"' gosec.sarif; then
+            echo "Critical or High severity security vulnerabilities detected." >&2
+            exit 1
+          fi
+          echo "No Critical/High security issues found."

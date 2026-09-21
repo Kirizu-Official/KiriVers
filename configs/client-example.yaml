@@ -1,0 +1,43 @@
+# 客户端平面（更新查询 / 下载 / feed / 遥测，默认 :8080）。
+# 环境变量前缀 KIRIVERS_CLIENT_（例：addr → KIRIVERS_CLIENT_ADDR）。
+# 公网通常只暴露本平面；管理面见 admin.yaml。
+# gin.SetMode 是进程全局：任一平面 mode=debug 则整个进程为 debug，否则 release。
+
+addr: ":8080"
+mode: debug
+# 证书与私钥同时非空才启用 HTTPS；否则明文。无进程级 TLS 回退。
+tls_cert: ""
+tls_key: ""
+# 信任的反向代理（IP 或 CIDR）。空 = 不信任 X-Forwarded-For，ClientIP 为直连地址。
+# 环境变量：KIRIVERS_CLIENT_TRUSTED_PROXIES（逗号分隔）
+trusted_proxies: []
+
+log:
+  system:
+    level: debug
+    console:
+      enabled: true
+      no_color: false
+    file:
+      enabled: true
+      dir: ./logs
+      filename: client-system.log
+      max_size_mb: 100
+      max_backups: 10
+      max_age_days: 28
+      compress: true
+      local_time: true
+  access:
+    level: debug
+    console:
+      enabled: true
+      no_color: false
+    file:
+      enabled: true
+      dir: ./logs
+      filename: client-access.log
+      max_size_mb: 100
+      max_backups: 10
+      max_age_days: 28
+      compress: true
+      local_time: true

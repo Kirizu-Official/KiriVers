@@ -1,0 +1,17 @@
+{
+  "name": "kirivers-docs",
+  "private": true,
+  "type": "module",
+  "description": "Official KiriVers documentation site. Yarn is used here the same way as the admin UI; do not document yarn on user-facing install pages.",
+  "scripts": {
+    "docs:dev": "node scripts/filter-openapi.mjs && vitepress dev",
+    "docs:build": "node scripts/filter-openapi.mjs && vitepress build",
+    "docs:preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "@scalar/api-reference": "1.69.1",
+    "mermaid": "^11.6.0",
+    "vitepress": "^2.0.0-alpha.20",
+    "vue": "^3.5.43"
+  }
+}

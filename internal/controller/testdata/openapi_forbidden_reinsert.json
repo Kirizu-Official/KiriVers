@@ -1,0 +1,45 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Forbidden reinsert fixture", "version": "0" },
+  "paths": {
+    "/api/v1/projects/{project_ref}/feed/{protocol}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "protocol_version",
+            "schema": { "type": "integer" }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "dirty_paths": {
+                    "items": { "type": "string" },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Leftover": {
+        "properties": {
+          "display_version": { "type": "string" },
+          "server_protocol": { "type": "integer" },
+          "min_client_protocol": { "type": "integer" },
+          "store_protocols": { "type": "object" }
+        },
+        "type": "object"
+      }
+    }
+  }
+}

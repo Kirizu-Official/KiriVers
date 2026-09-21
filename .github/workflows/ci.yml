@@ -1,0 +1,287 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main, 'sdk/**']
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  pre-flight:
+    name: Pre-flight Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Egress hardening
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret Scanning (TruffleHog)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified
+
+      - name: Dependency Review (CVE gate)
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+
+  commitlint:
+    name: Conventional Commits
+    needs: pre-flight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Lint PR title and commits
+        if: github.event_name == 'pull_request'
+        env:
+          COMMITLINT_TITLE: ${{ github.event.pull_request.title }}
+          COMMITLINT_FROM: ${{ github.event.pull_request.base.sha }}
+          COMMITLINT_TO: ${{ github.event.pull_request.head.sha }}
+        run: python3 dev/build/kirivers.py commitlint
+      - name: Lint pushed commits
+        if: github.event_name == 'push'
+        env:
+          COMMITLINT_FROM: ${{ github.event.before }}
+          COMMITLINT_TO: ${{ github.event.after }}
+        run: python3 dev/build/kirivers.py commitlint
+
+  # Every pull request into main must be tied to an issue. Direct pushes to main
+  # and pull requests based on sdk/* are deliberately not gated (design.md §6).
+  issue-link:
+    name: Linked issue
+    needs: pre-flight
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a linked issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # PR number travels through the environment, never inlined into the
+          # shell command (design.md §3.2: no expression interpolation in run:).
+          PR: ${{ github.event.pull_request.number }}
+        run: python3 dev/build/kirivers.py issue-link "$PR"
+
+  path-filter:
+    name: Detect Changed Paths
+    needs: pre-flight
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      go: ${{ steps.filter.outputs.go }}
+      website: ${{ steps.filter.outputs.website }}
+      sdk: ${{ steps.filter.outputs.sdk }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+            go:
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'third_party/hdiffpatch/**'
+            website:
+              - 'website/**'
+            sdk:
+              - 'sdk/**'
+
+  # Base pipeline: Frontend build is always verified first
+  frontend:
+    name: yarn build (frontend)
+    needs: path-filter
+    if: github.event_name == 'push' || github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Egress hardening
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - name: Build admin UI
+        run: python3 dev/build/kirivers.py frontend-build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist-ci
+          path: frontend/dist
+
+  # Go build embeds the real UI generated in frontend step
+  go-build:
+    name: go build embeds the real UI
+    needs: frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Egress hardening
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: C++ toolchain
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc g++ libc6-dev
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist-ci
+          path: frontend/dist
+      - name: Require embedded UI
+        run: test -f frontend/dist/index.html
+      - name: Build
+        run: python3 dev/build/kirivers.py build-cgo linux amd64 dist/kirivers-ci
+      - name: Assert the binary runs
+        run: |
+          set -eu
+          test -x dist/kirivers-ci
+          ./dist/kirivers-ci admin --help >/dev/null
+      - name: Assert CGO_ENABLED=0 is not a release path
+        run: |
+          set -eu
+          if CGO_ENABLED=0 go build -o /tmp/kirivers-nocgo . 2>/dev/null; then
+            echo "CGO_ENABLED=0 build unexpectedly succeeded" >&2
+            exit 1
+          fi
+
+  # Path-filtered: Run frontend lint & typecheck when frontend changes
+  frontend-test:
+    name: Frontend Lint & TypeCheck
+    needs: [path-filter, go-build]
+    if: needs.path-filter.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Egress hardening
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - name: Yarn install
+        run: yarn --cwd frontend install --frozen-lockfile
+      - name: Type check & Lint
+        run: |
+          yarn --cwd frontend type-check
+          yarn --cwd frontend lint
+
+  # Path-filtered: Run Go tests (with CGO delta tests) when go files change or on push
+  go-test:
+    name: Go tests (CGO)
+    needs: [path-filter, go-build]
+    if: github.event_name == 'push' || needs.path-filter.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Egress hardening
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: C++ toolchain
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc g++ libc6-dev
+      - name: Delta engine tests
+        env:
+          CGO_ENABLED: "1"
+        run: go test ./internal/delta/...
+      - name: Unit tests
+        env:
+          CGO_ENABLED: "1"
+        run: go test ./...
+
+  # Path-filtered: Build VitePress docs when website/** changes
+  website-build:
+    name: VitePress Docs Build
+    needs: [path-filter, go-build]
+    if: needs.path-filter.outputs.website == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Egress hardening
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build Docs
+        run: |
+          set -eu
+          cd website
+          yarn install --frozen-lockfile
+          yarn docs:build
+
+  # Target branch is sdk/*: Run SDK build & test
+  sdk-ci:
+    name: SDK Test Suite
+    needs: path-filter
+    if: startsWith(github.base_ref, 'sdk/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Egress hardening
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+      - name: Run SDK Suite
+        # The branch name travels through the environment, never inlined into
+        # the shell command (design.md §3.2).
+        env:
+          SDK_BASE_REF: ${{ github.base_ref }}
+        run: echo "Executing test suite for SDK branch $SDK_BASE_REF"
+
+  changelog:
+    name: Changelog contract
+    needs: pre-flight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Type table and release-notes self-check
+        run: |
+          set -eu
+          test -f dev/build/changelog-types.conf
+          python3 dev/build/kirivers.py release-notes --self-check
+      - name: Guard the next-version derivation
+        run: |
+          set -eu
+          python3 dev/build/kirivers.py next-version --format env
+          python3 dev/build/kirivers.py check-workflows

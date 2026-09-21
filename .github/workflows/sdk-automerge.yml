@@ -1,0 +1,324 @@
+name: SDK Automerge & Release
+
+# Manually triggered workflow (maintainers only) to batch-merge qualified SDK
+# pull requests (label 'ready-merge' + every CI check SUCCESS) into their
+# sdk/<lang> orphan branches, then - inside this same run, per the single
+# self-contained workflow contract - derive versions with the branch's own
+# scripts/sdk_release.py, bump manifests, tag sdk-<lang>-v<semver>, publish
+# GitHub Releases, and push artifacts to the official language registries
+# (crates.io, PyPI, npm, NuGet, pub.dev, Maven Central).
+#
+# Merge and GitHub Release use only the built-in GITHUB_TOKEN (REQ-5.1).
+# A registry secret that is not configured degrades to a loud warning and a
+# skip (design.md §2); a push that is attempted and fails reddens the run
+# instead of being swallowed - silent publish failures are forbidden (REQ-5.4).
+on:
+  workflow_dispatch:
+    inputs:
+      target_sdk:
+        description: 'Target SDK branch to process (e.g. sdk/python, or "all" for every updated SDK branch)'
+        required: true
+        default: 'all'
+
+# contents:write = push tags/bumps + create Releases; pull-requests:write =
+# merge + comment. id-token is deliberately NOT requested: no step here uses
+# OIDC trusted publishing, every registry path authenticates with a secret.
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: sdk-automerge-release
+  cancel-in-progress: false
+
+jobs:
+  merge-and-release:
+    name: Merge Ready SDK PRs and Publish Releases
+    runs-on: ubuntu-latest
+    outputs:
+      # JSON array of {lang, branch, tag, version} for every branch that got a
+      # new GitHub Release in this run and has a registry to push to. Feeds the
+      # registry-publish matrix below.
+      released: ${{ steps.export.outputs.released }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Scan and safely automerge ready-merge SDK PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_FILTER: ${{ github.event.inputs.target_sdk }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/sdk-run
+          touch /tmp/sdk-run/modified_branches.txt
+          touch /tmp/sdk-run/released.jsonl
+
+          echo "Searching for PRs with label 'ready-merge'..."
+          prs=$(gh pr list --label "ready-merge" --json number,baseRefName,title --jq '.[]' || true)
+
+          if [ -z "$prs" ]; then
+            echo "No PRs currently labeled with 'ready-merge'."
+            exit 0
+          fi
+
+          echo "$prs" | jq -c '.' | while read -r pr; do
+            num=$(echo "$pr" | jq -r '.number')
+            base=$(echo "$pr" | jq -r '.baseRefName')
+            title=$(echo "$pr" | jq -r '.title')
+
+            # Only process SDK branches
+            if [[ "$base" =~ ^sdk/ ]]; then
+              if [ "$TARGET_FILTER" != "all" ] && [ "$base" != "$TARGET_FILTER" ]; then
+                echo "Skipping PR #$num ($title) -> targets $base (filtered out by $TARGET_FILTER)"
+                continue
+              fi
+
+              echo "Checking CI checks status for PR #$num ($title)..."
+              # REQ-5.2: every check must be SUCCESS, and "all SUCCESS" over a
+              # zero-check list must not pass either - no checks means CI never
+              # ran over this head commit.
+              checks_status=$(gh pr checks "$num" --json state --jq 'length > 0 and all(.state == "SUCCESS")' || echo "false")
+              if [ "$checks_status" = "true" ]; then
+                echo "All checks passed! Squashing and merging PR #$num into $base..."
+                gh pr merge "$num" --squash --delete-branch=false
+                echo "$base" >> /tmp/sdk-run/modified_branches.txt
+                gh pr comment "$num" --body "🚀 PR 已由 SDK 运维工作流安全合并入 \`$base\`。"
+              else
+                echo "PR #$num has pending, failing or missing checks. Skipping merge."
+              fi
+            fi
+          done
+
+      - name: Process releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ ! -s /tmp/sdk-run/modified_branches.txt ]; then
+            echo "No SDK branches were modified during this run. Nothing to release."
+            exit 0
+          fi
+
+          sort -u /tmp/sdk-run/modified_branches.txt | while read -r branch; do
+            lang="${branch#sdk/}"
+            echo "========================================================"
+            echo "Processing branch: $branch (Language SDK: $lang)"
+            echo "========================================================"
+
+            git fetch origin "$branch"
+            git checkout "$branch"
+
+            if [ ! -f "scripts/sdk_release.py" ]; then
+              echo "Branch $branch does not contain scripts/sdk_release.py, skipping."
+              continue
+            fi
+
+            # Plan release using the branch's release engine
+            python3 scripts/sdk_release.py plan | tee /tmp/plan.json
+            action=$(jq -r .action /tmp/plan.json)
+            tag=$(jq -r .tag /tmp/plan.json)
+            version=$(jq -r .version /tmp/plan.json)
+
+            if [ "$action" = "skip" ]; then
+              echo "Release skipped for $branch: $(jq -r .reason /tmp/plan.json)"
+              continue
+            fi
+
+            echo "Applying release for $branch: tag=$tag, version=$version"
+            python3 scripts/sdk_release.py apply | tee /tmp/apply.json
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+            if [ "$action" = "bump" ]; then
+              git add -A
+              git restore --staged sdk-release-notes.md 2>/dev/null || true
+              git diff --cached --quiet || git commit -m "chore(release): $version"
+            fi
+
+            git tag -a "$tag" -m "$tag"
+            git push origin "HEAD:$branch" --follow-tags
+            # C / C++ have no registry identity: the GitHub Release carries a
+            # source archive zip built from the tag (docs/sdk-publish.md), with
+            # the package directory inside named after the archive.
+            if [ "$lang" = "c" ] || [ "$lang" = "cpp" ]; then
+              archive="kirivers-$lang-$version.zip"
+              git archive --format=zip --prefix="${archive%.zip}/" -o "/tmp/sdk-run/$archive" "$tag"
+              gh release create "$tag" --title "$tag" --notes-file sdk-release-notes.md --target "$branch" "/tmp/sdk-run/$archive"
+            else
+              gh release create "$tag" --title "$tag" --notes-file sdk-release-notes.md --target "$branch"
+            fi
+
+            # Hand the registry push to the matrix job. Languages whose artifacts
+            # are not uploaded anywhere (c, cpp, go-src, php-src, swift-src) are
+            # intentionally left out; the *-src trio's sdk_release.py already
+            # answered `skip` for this repository anyway (publish_repo identity).
+            case "$lang" in
+              rust | python | typescript | csharp | dart | java | kotlin)
+                jq -nc --arg lang "$lang" --arg branch "$branch" --arg tag "$tag" --arg version "$version" \
+                  '{lang: $lang, branch: $branch, tag: $tag, version: $version}' >> /tmp/sdk-run/released.jsonl
+                ;;
+            esac
+          done
+
+      - name: Export release matrix
+        id: export
+        run: |
+          set -eu
+          # `jq -s` over an empty file yields [], which skips the matrix job.
+          released=$(jq -s -c '.' /tmp/sdk-run/released.jsonl)
+          echo "released=$released" >> "$GITHUB_OUTPUT"
+
+  # One job per released SDK with a registry, so the publishing steps can be
+  # real actions (katyo/publish-crates, pypa/gh-action-pypi-publish,
+  # JS-DevTools/npm-publish) instead of CLI workarounds inside a shell loop
+  # (design.md §2 selection table). A failing push reddens this job only after
+  # merge + GitHub Release already succeeded in the previous job.
+  registry-publish:
+    name: Publish ${{ matrix.sdk.lang }} SDK to its registry
+    needs: merge-and-release
+    if: needs.merge-and-release.outputs.released != '[]' && needs.merge-and-release.outputs.released != ''
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: ${{ fromJSON(needs.merge-and-release.outputs.released) }}
+    env:
+      SDK_LANG: ${{ matrix.sdk.lang }}
+      SDK_BRANCH: ${{ matrix.sdk.branch }}
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+      PUB_CREDENTIALS: ${{ secrets.PUB_CREDENTIALS }}
+      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+    steps:
+      - name: Check out the released SDK branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sdk.branch }}
+          fetch-depth: 1
+
+      # Pre-flight the credential contract (design.md §2): a missing token is
+      # a loud warning + skip, never a silently green "publish".
+      - name: Probe the registry secret
+        id: probe
+        run: |
+          set -eu
+          case "$SDK_LANG" in
+            rust) secret=CARGO_REGISTRY_TOKEN ;;
+            python) secret=PYPI_TOKEN ;;
+            typescript) secret=NPM_TOKEN ;;
+            csharp) secret=NUGET_API_KEY ;;
+            dart) secret=PUB_CREDENTIALS ;;
+            java | kotlin) secret=MAVEN_CENTRAL_USERNAME ;;
+            *) secret="" ;;
+          esac
+          present=0
+          secret_value=""
+          if [ -n "$secret" ]; then
+            secret_value=$(printenv "$secret") || true
+          fi
+          if [ -n "$secret_value" ]; then
+            case "$SDK_LANG" in
+              # Maven Central needs the username/password pair, not one half.
+              java | kotlin)
+                if [ -n "${MAVEN_CENTRAL_PASSWORD:-}" ]; then
+                  present=1
+                fi
+                ;;
+              *) present=1 ;;
+            esac
+          fi
+          echo "present=$present" >> "$GITHUB_OUTPUT"
+          echo "secret=$secret" >> "$GITHUB_OUTPUT"
+
+      - name: Warn about the missing registry secret
+        if: steps.probe.outputs.present != '1'
+        env:
+          SECRET_NAME: ${{ steps.probe.outputs.secret }}
+        run: echo "::warning::Missing secret $SECRET_NAME, skipping registry push"
+
+      # ---- Rust -> crates.io (katyo/publish-crates, design.md §2) ----------
+      - name: Set up Rust
+        if: steps.probe.outputs.present == '1' && matrix.sdk.lang == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+      - name: Publish Rust to crates.io
+        if: steps.probe.outputs.present == '1' && matrix.sdk.lang == 'rust'
+        uses: katyo/publish-crates@v2
+        with:
+          registry-token: ${{ env.CARGO_REGISTRY_TOKEN }}
+
+      # ---- Python -> PyPI (pypa/gh-action-pypi-publish) -------------------
+      - name: Set up Python
+        if: steps.probe.outputs.present == '1' && matrix.sdk.lang == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheels and sdist
+        if: steps.probe.outputs.present == '1' && matrix.sdk.lang == 'python'
+        run: |
+          set -eu
+          python3 -m pip install --upgrade build
+          python3 -m build
+      - name: Publish Python to PyPI
+        if: steps.probe.outputs.present == '1' && matrix.sdk.lang == 'python'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          username: __token__
+          password: ${{ env.PYPI_TOKEN }}
+
+      # ---- TypeScript -> npm (JS-DevTools/npm-publish) --------------------
+      - name: Set up Node.js
+        if: steps.probe.outputs.present == '1' && matrix.sdk.lang == 'typescript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Publish TypeScript to npm
+        if: steps.probe.outputs.present == '1' && matrix.sdk.lang == 'typescript'
+        uses: JS-DevTools/npm-publish@v3
+        with:
+          token: ${{ env.NPM_TOKEN }}
+          access: public
+
+      # ---- C# -> NuGet (official CLI, design.md §2) ------------------------
+      - name: Set up .NET
+        if: steps.probe.outputs.present == '1' && matrix.sdk.lang == 'csharp'
+        uses: actions/setup-dotnet@v4
+      - name: Pack and push to NuGet
+        if: steps.probe.outputs.present == '1' && matrix.sdk.lang == 'csharp'
+        run: |
+          set -eu
+          dotnet pack -c Release
+          dotnet nuget push bin/Release/*.nupkg -k "$NUGET_API_KEY" -s https://api.nuget.org/v3/index.json
+
+      # ---- Dart -> pub.dev (official CLI) ----------------------------------
+      - name: Set up Dart
+        if: steps.probe.outputs.present == '1' && matrix.sdk.lang == 'dart'
+        uses: dart-lang/setup-dart@v1
+      - name: Publish to pub.dev
+        if: steps.probe.outputs.present == '1' && matrix.sdk.lang == 'dart'
+        run: dart pub publish --force
+
+      # ---- Java / Kotlin -> Maven Central (official CLI) -------------------
+      - name: Set up JDK
+        if: steps.probe.outputs.present == '1' && (matrix.sdk.lang == 'java' || matrix.sdk.lang == 'kotlin')
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Deploy Java to Central
+        if: steps.probe.outputs.present == '1' && matrix.sdk.lang == 'java'
+        run: ./mvnw -DskipTests -Pci-central deploy
+      - name: Publish Kotlin to Central
+        if: steps.probe.outputs.present == '1' && matrix.sdk.lang == 'kotlin'
+        run: ./gradlew publish

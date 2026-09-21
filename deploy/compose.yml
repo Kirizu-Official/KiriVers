@@ -1,0 +1,80 @@
+# 使用者一键部署：本目录即可拷走。官方镜像 + PostgreSQL + Redis。
+# 口令只写 .env（模板 .env.example），同时进入三服务，不必再改 YAML 里的库口令。
+#
+#   cd deploy
+#   cp .env.example .env    # 改 POSTGRES_PASSWORD、REDIS_PASSWORD、URL_SIGNING_SECRET
+#   docker compose up -d
+#
+# 对外只映射 8080/8081。Postgres/Redis 走内部网络。
+# 数据在 ./data，配置在 ./config。不要和 dev/docker/compose.yml 混用（那个只跑数据库）。
+
+name: kirivers-app
+
+x-kirivers-env: &kirivers-env
+  TZ: ${POSTGRES_TZ}
+  KIRIVERS_CONFIG: /config
+  KIRIVERS_POSTGRES_DSN: "host=postgres user=${POSTGRES_USER} password=${POSTGRES_PASSWORD} dbname=${POSTGRES_DB} port=5432 sslmode=disable TimeZone=${POSTGRES_TZ}"
+  KIRIVERS_CACHE_DRIVER: redis
+  KIRIVERS_CACHE_REDIS_ADDR: redis:6379
+  KIRIVERS_CACHE_REDIS_PASSWORD: ${REDIS_PASSWORD}
+  KIRIVERS_URL_SIGNING_SECRET: ${URL_SIGNING_SECRET}
+  KIRIVERS_STORAGE_LOCAL_ROOT: /data/storage
+  KIRIVERS_LOG_FILE_DIR: /data/logs
+  KIRIVERS_ADMIN_LOG_SYSTEM_FILE_DIR: /data/logs
+  KIRIVERS_ADMIN_LOG_ACCESS_FILE_DIR: /data/logs
+  KIRIVERS_CLIENT_LOG_SYSTEM_FILE_DIR: /data/logs
+  KIRIVERS_CLIENT_LOG_ACCESS_FILE_DIR: /data/logs
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      TZ: ${POSTGRES_TZ}
+      PGTZ: ${POSTGRES_TZ}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      TZ: ${POSTGRES_TZ}
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  kirivers:
+    image: kirizuofficial/kirivers:latest
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    environment:
+      <<: *kirivers-env
+    volumes:
+      - ./config:/config
+      - ./data/storage:/data/storage
+      - ./data/logs:/data/logs

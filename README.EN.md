@@ -1,0 +1,146 @@
+<p align="center">
+  <img src="website/docs/public/logo.png" alt="KiriVers" width="120">
+</p>
+
+<h1 align="center">KiriVers</h1>
+
+<p align="center">Self-hosted software update service</p>
+
+<p align="center">
+Language: <a href="README.md">中文</a> · <b>English</b>
+</p>
+
+<p align="center">
+  Documentation: <a href="https://kirivers.kirizu.dev">https://kirivers.kirizu.dev</a>
+</p>
+
+KiriVers lets you **host software updates yourself**: publish installers, firmware or file lists to this service, and the apps on your devices check for updates and download them. It is not git, it cannot replace App Store, Google Play or Microsoft Store, and it is not an APT / RPM / Flatpak repository either.
+
+One process serves two ports at the same time:
+
+| Service | Default address | Responsibility |
+|---------|-----------------|----------------|
+| Client | `:8080` | Update checks, downloads, store feeds, telemetry, announcements |
+| Admin | `:8081` | Admin console and CI agent |
+
+The official Release binaries already embed the admin console, so you usually do not need to build or deploy the frontend separately. Running it requires **PostgreSQL** (≥ 14); **Redis is optional** (the in-process memory cache is enough on a single node). Artifacts can live on local disk, or in S3-compatible storage (MinIO / Cloudflare R2 / AWS S3, etc.).
+
+## Main directories
+
+| Entry | Notes |
+|-------|-------|
+| [`internal`](internal/) / [`cmd/`](cmd/) | Main Go business logic |
+| [`configs`](configs/) | Default location of the configuration files |
+| [`website/`](website/) | VitePress documentation site |
+| [`frontend/`](frontend/) | Vue admin console source (embedded into the binary by `frontend/embed.go`) |
+| [`.trellis/`](.trellis/) | Trellis-based persistent AI agent memory |
+| [`dev/`](dev/) | Development environment and helper scripts |
+
+## Key features
+
+- **Self-hosted**: no third-party service involved; data and updates stay entirely on servers you control.
+- **Multi-project**: one instance manages several software projects with fully separate data, and you can create admins per project (a project admin can manage only that project — not other projects, not system configuration).
+- **Multi-platform**: updates for apps on Windows, macOS, Linux, iOS, Android and more.
+- **Multi-architecture**: on top of the platform, updates can be split further by architecture such as x86, amd64 and ARM.
+- **Multi-channel**: separate release channels (beta, stable, nightly, …), each with its own versions and update policy; a channel can require a Token so it stays private.
+- **Delta updates**: single files (e.g. an APK) use binary deltas; multi-file payloads (e.g. a program directory on Windows) support on-the-fly and pre-packed differential bundles, which cuts download size and bandwidth.
+- **Staged rollout**: configure a gray-release policy that starts from an initial percentage and widens over time by a specified increment.
+- **Changelogs**: publish a changelog for each version in the console, and clients receive it when they check for updates.
+- **Announcements**: publish announcements from the console, targeted by platform, architecture or version, or project-wide.
+- **Multi-language**: changelogs per channel and version in different languages, plus announcements in different languages — clients can pick according to the system language.
+- **Multi-node**: deploy several KiriVers instances and let the child nodes handle distribution and downloads.
+
+## Install
+
+Each KiriVers release ships its executables as **zip archives** on [GitHub Releases](https://github.com/Kirizu-Official/KiriVers/releases); Docker images for Linux amd64 and arm64 are published as [kirizuofficial/kirivers](https://hub.docker.com/r/kirizuofficial/kirivers).
+
+| Environment | Recommendation |
+|-------------|----------------|
+| Linux | Run it with Docker Compose |
+| Windows | Install PostgreSQL manually, then download and run the binary |
+
+**One-click Docker Compose deployment**: use the [`deploy/`](deploy/) directory (official image + PostgreSQL + Redis), copy `.env.example` to `.env`, edit it, then run `docker compose up -d`.
+
+> **!!! Do not use `dev/docker/compose.yml` — it is for development and testing only. Reusing its fixed passwords in production is a serious security problem !!!**
+
+```bash
+cd deploy
+cp .env.example .env   # set the passwords and configuration in it
+docker compose up -d
+```
+
+Passwords are written only in `.env`, and feed Postgres, Redis and KiriVers at the same time. The sample value `CHANGE_ME` must not be used in production.
+
+## First launch
+
+### Configuration files
+
+With the one-click Docker Compose deployment, `.env` in `deploy/` overrides the configuration files; if you installed KiriVers any other way, create the configuration files yourself.
+
+1. Copy `configs/config-example.yaml`, `admin-example.yaml` and `client-example.yaml` to `config.yaml`, `admin.yaml` and `client.yaml` in the same directory.
+2. Fill in the PostgreSQL DSN; generate a random `url_signing_secret` of at least 32 characters (otherwise every download URL issued before a restart becomes invalid).
+3. Start the process (no argument starts the service, which is the same as `kirivers server`):
+
+```bash
+./kirivers
+```
+
+### Create the first admin
+
+**Note:** KiriVers does not create an admin account on first start, and there is no default account and no web signup. After the first start, create an admin account through the CLI, or you will not be able to log into the console.
+
+Create the first admin with the command below: replace `{username}` with your user name, and the command then asks for a password (typing is not echoed):
+
+```bash
+kirivers admin add {username}
+```
+
+## Develop from source
+
+You need Go (see `go.mod`), Node.js ≥ 20, Yarn, PostgreSQL, and a native C++ toolchain (the server-side delta engine links HDiffPatch, so `CGO_ENABLED=1` is required).
+
+```bash
+# Start PostgreSQL and Redis
+docker compose -f dev/docker/compose.yml up -d
+
+# Build the frontend once; go build / go run embeds frontend/dist into the binary
+cd frontend && yarn install && yarn build
+
+# Start the service
+CGO_ENABLED=1 go run .                   # client :8080, admin :8081
+CGO_ENABLED=1 go run . admin add <user>  # separate terminal
+```
+
+When working on the frontend, run `cd frontend && yarn install && yarn dev` for the dev server (`http://localhost:3000`, with the APIs already proxied to `:8080` / `:8081`); you do not need `yarn build` first.
+
+## License
+
+The KiriVers server (including the admin console frontend) is open source under GPLv3; the client SDK is open source under MIT:
+
+**GPLv3**: you are free to use, modify and distribute the KiriVers server, but every modification and derivative work must be released under the same GPLv3 license, and you must **provide the source code, or a way for people to obtain it publicly** (in short, it has to stay open source).
+
+**MIT**: you are free to use, modify and distribute the client SDK, including for commercial use, and you do not have to open source the changes you make to it.
+
+You may:
+
+- Freely use, modify and distribute the client SDK, including for commercial use.
+- Freely use, modify and distribute the KiriVers server, including for commercial use.
+
+Restrictions:
+
+When distributing the KiriVers server, you must comply with the terms of GPLv3:
+
+- Provide your modified source code, or a way for people to obtain it publicly.
+- Keep the original author's copyright notice and license information.
+- Document your changes in the modified version.
+
+---
+
+Acceptable use:
+
+- Do not use it in violation of applicable laws and regulations.
+- Do not use it to infringe other people's intellectual property.
+- Do not use it to spread malware, viruses or other harmful programs.
+- Do not use it for any other unlawful or unethical purpose.
+
+**You must comply with applicable laws and regulations and bear the risks of using the KiriVers server and the client SDK yourself; all liability rests with you.**

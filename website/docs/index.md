@@ -1,0 +1,29 @@
+---
+layout: home
+title: "KiriVers"
+description: "自托管软件更新服务：发布产物，客户端检查并下载更新。"
+hero:
+  name: KiriVers
+  text: 自托管软件更新服务
+  tagline: 发布产物；应用检查并下载更新。官方二进制已内嵌管理台。
+  image:
+    src: /logo.png
+    alt: KiriVers
+  actions:
+    - theme: brand
+      text: 安装
+      link: /guide/install/
+    - theme: alt
+      text: 管理台快速上手
+      link: /admin/quick-start
+    - theme: alt
+      text: SDK
+      link: /api/sdk/
+features:
+  - title: 双平面
+    details: 单进程监听客户端平面（默认 :8080）与管理平面（默认 :8081）。
+  - title: 原生 JSON 与商店 feed
+    details: 自制客户端走 POST 检查更新；Electron / Sparkle 等读商店 listing URL。
+  - title: PostgreSQL 必需
+    details: Redis 可选。cache.driver=redis 时启动必须 Ping 成功，否则进程不监听。
+---

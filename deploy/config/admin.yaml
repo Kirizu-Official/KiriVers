@@ -1,0 +1,38 @@
+
+addr: ":8081"
+mode: release
+enabled: true
+tls_cert: ""
+tls_key: ""
+trusted_proxies: []
+static_dir: frontend/dist
+
+log:
+  system:
+    level: info
+    console:
+      enabled: true
+      no_color: false
+    file:
+      enabled: true
+      dir: /data/logs
+      filename: admin-system.log
+      max_size_mb: 100
+      max_backups: 10
+      max_age_days: 28
+      compress: true
+      local_time: true
+  access:
+    level: info
+    console:
+      enabled: true
+      no_color: false
+    file:
+      enabled: true
+      dir: /data/logs
+      filename: admin-access.log
+      max_size_mb: 100
+      max_backups: 10
+      max_age_days: 28
+      compress: true
+      local_time: true

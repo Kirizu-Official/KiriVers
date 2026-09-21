@@ -1,0 +1,77 @@
+name: "缺陷报告 / Bug report"
+description: "报告一个可复现的问题 / Report a reproducible problem"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先搜索已有 Issue，确认不是重复报告。修好后开 PR 时在描述里写 `Fixes #本Issue编号`（或用侧栏 Development → Link an issue 关联）——进 `main` 的 PR 必须绑定 Issue。
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么 / What happened
+      description: 把现象说清楚，包括报错文本
+      placeholder: 期望……，实际……
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      description: 从干净环境开始，一步一步
+      placeholder: |
+        1. 配置 admin.yaml 的 …
+        2. 执行 `kirivers server`
+        3. 调用 `POST /api/v1/...`
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: KiriVers 版本 / Version
+      description: 管理台「关于」页，或 `git describe --tags`；自编译请填 commit
+      placeholder: v0.3.0 或 3dce653
+    validations:
+      required: true
+  - type: dropdown
+    id: plane
+    attributes:
+      label: 受影响的平面 / Affected plane
+      multiple: true
+      options:
+        - 管理平面 (admin)
+        - 客户端平面 (client)
+        - 差量引擎 (delta)
+        - 存储适配器 (storage)
+        - 文档 / 构建脚本
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: 运行环境 / Environment
+      multiple: true
+      options:
+        - Linux amd64
+        - Linux arm64
+        - Linux 其他架构（x86 / armv7 / riscv64）
+        - macOS Intel
+        - macOS Apple Silicon
+        - Windows
+        - Docker 镜像
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志 / Relevant logs
+      description: 结构化的 JSON 日志片段。请注意 token、密钥、内网地址 等敏感信息
+      render: text
+  - type: checkboxes
+    id: secrets
+    attributes:
+      label: 安全检查 / Safety check
+      options:
+        - label: 我已从贴出的日志与配置中删除密钥、token 与真实主机名
+          required: true

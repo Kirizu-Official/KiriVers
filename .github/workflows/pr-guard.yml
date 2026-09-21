@@ -1,0 +1,167 @@
+name: PR guard
+
+# Comments on, and closes, pull requests into main that are not linked to an
+# issue or whose title is not Conventional Commits (design.md §12, R8).
+#
+# SECURITY: pull_request_target runs with a write token from the base branch, so
+# this workflow must never read or run anything the contributor authored. It
+# checks out only `main`, passes `contents: read`, calls no build or test step,
+# and touches the PR through the API alone. dev/build/kirivers.py check-workflows
+# asserts each of those invariants.
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: write
+  statuses: write
+
+concurrency:
+  group: pr-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: Check title and linked issue
+    runs-on: ubuntu-latest
+    # Pull requests based on sdk/* are out of scope: their release pipelines own
+    # the version bump and a bot closure there would block a publish.
+    if: github.event.pull_request.base.ref == 'main'
+    steps:
+      - name: Check out the base branch only
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Official Conventional Commits Status Check
+        uses: amannn/action-semantic-pull-request@v5
+        continue-on-error: true
+        with:
+          types: |
+            feat
+            fix
+            perf
+            revert
+            docs
+            refactor
+            test
+            style
+            chore
+            ci
+            build
+          requireScope: false
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Collect pull request metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -eu
+          gh pr view "$PR" --json number,isDraft,author,authorAssociation,labels,title,body \
+            --jq '"number=\(.number)",
+                   "draft=\(.isDraft)",
+                   "typename=\(.author.__typename)",
+                   "author=\(.author.login)",
+                   "association=\(.authorAssociation)",
+                   "labels=\(.labels | map(.name) | join(","))",
+                   "title=\(.title | gsub("[\r\n]"; " "))",
+                   "body=\(.body // "" | gsub("[\r\n]"; " | "))"' >pr-record.txt
+          cat pr-record.txt
+
+      - name: Lint the title
+        env:
+          GH_TOKEN: ${{ github.token }}
+        id: title
+        run: |
+          set -eu
+          title=$(sed -n 's/^title=//p' pr-record.txt | head -n 1)
+          if COMMITLINT_TITLE="$title" python3 dev/build/kirivers.py commitlint; then
+            echo "ok=1" >>"$GITHUB_OUTPUT"
+          else
+            # Exit 1 is a formatting problem the contributor can fix; anything
+            # past it is the tool failing, which must not be answered by
+            # policing (or closing) someone's pull request.
+            case $? in
+            1) echo "ok=0" >>"$GITHUB_OUTPUT" ;;
+            *) echo "ok=error" >>"$GITHUB_OUTPUT" ;;
+            esac
+          fi
+
+      - name: Check the linked issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        id: issue
+        run: |
+          set -eu
+          token=$(python3 dev/build/kirivers.py issue-link --record pr-record.txt || true)
+          # An unexpected or empty token means the check itself broke, so it maps
+          # to the same `error` as the explicit one: never close a pull request
+          # because our own API call failed.
+          case "$token" in
+          ok | skip) echo "ok=1" >>"$GITHUB_OUTPUT" ;;
+          fail) echo "ok=0" >>"$GITHUB_OUTPUT" ;;
+          *) echo "ok=error" >>"$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Decide
+        id: decide
+        run: |
+          set -eu
+          decision=$(python3 dev/build/kirivers.py guard --record pr-record.txt \
+            --title-ok '${{ steps.title.outputs.ok }}' \
+            --issue-ok '${{ steps.issue.outputs.ok }}' \
+            --out pr-comment.md)
+          echo "decision=$decision" >>"$GITHUB_OUTPUT"
+          {
+            echo "## PR guard"
+            echo
+            echo "- decision: \`$decision\`"
+            echo "- title ok: \`${{ steps.title.outputs.ok }}\`, issue ok: \`${{ steps.issue.outputs.ok }}\`"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Apply the decision
+        if: steps.decide.outputs.decision != 'skip'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          DECISION: ${{ steps.decide.outputs.decision }}
+        run: |
+          set -eu
+          repo='${{ github.repository }}'
+          # One comment per pull request, found by its hidden marker.
+          existing=$(gh api "repos/$repo/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.body | startswith("<!-- pr-guard -->")) | .id' | tail -n 1)
+
+          post() {
+            if [ -n "$existing" ]; then
+              gh api -X PATCH "repos/$repo/issues/comments/$existing" -F body=@pr-comment.md >/dev/null
+            else
+              gh pr comment "$PR" --body-file pr-comment.md >/dev/null
+            fi
+          }
+
+          case "$DECISION" in
+          pass)
+            # Only touch the thread when a previous complaint is still standing.
+            if [ -n "$existing" ]; then post; fi
+            ;;
+          comment)
+            post
+            ;;
+          close)
+            post
+            # No branch deletion and no lock: a reopened pull request is checked
+            # again by this workflow.
+            gh pr close "$PR"
+            ;;
+          *)
+            echo "pr-guard: unexpected decision '$DECISION'" >&2
+            exit 1
+            ;;
+          esac

@@ -1,0 +1,442 @@
+name: Release
+
+# The only server publishing entry point. Merging into main never publishes;
+# this workflow runs when a maintainer starts it, and the version is derived
+# from Conventional Commits since the last annotated v* tag.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: server-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+# Build-info stamp shared by every job in one run. These two are constant for
+# the whole workflow run and need no job output, so they live at workflow level;
+# KIRIVERS_VERSION comes from `needs.version` and is therefore per job.
+# run_started_at (not each job's own clock) is deliberate: the About page shows
+# one timestamp per artifact family, and operators must not read eleven
+# different ones as eleven builds. Format is ISO 8601 UTC, which is what
+# internal/buildinfo.BuildTime is documented to carry.
+# The commit is truncated to the same 7 hex digits that `_git_short_commit()`
+# (build.py) and `commitShortLen` (internal/buildinfo) produce, so a release
+# binary and a local `go build` report the same width. A raw github.sha would
+# have made the About page 40 characters wide on official builds only.
+env:
+  KIRIVERS_BUILD_COMMIT: ${{ substring(github.sha, 0, 7) }}
+  KIRIVERS_BUILD_TIME: ${{ github.run_started_at }}
+
+jobs:
+  version:
+    name: Next version
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.n.outputs.release }}
+      version: ${{ steps.n.outputs.version }}
+      prev: ${{ steps.n.outputs.prev }}
+      publish: ${{ steps.n.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch annotated tags
+        run: git fetch --tags --force origin
+      - id: n
+        env:
+          SERVER_PUBLISH: ${{ vars.SERVER_PUBLISH }}
+        run: |
+          set -eu
+          eval "$(python3 dev/build/kirivers.py next-version --format env)"
+          publish=yes
+          if [ "$KIRIVERS_RELEASE" != yes ]; then
+            publish=no
+          fi
+          case "${SERVER_PUBLISH:-true}" in
+            false | FALSE | 0 | no | NO | off | OFF) publish=no ;;
+          esac
+          {
+            echo "release=$KIRIVERS_RELEASE"
+            echo "version=$KIRIVERS_VERSION"
+            echo "prev=$KIRIVERS_PREV"
+            echo "publish=$publish"
+          } >>"$GITHUB_OUTPUT"
+          {
+            echo "## Derived version"
+            echo
+            echo "- release: \`$KIRIVERS_RELEASE\`"
+            echo "- version: \`v$KIRIVERS_VERSION\` (previous tag: \`${KIRIVERS_PREV:-none}\`)"
+            echo "- publish: \`$publish\` (\`SERVER_PUBLISH\` is the manual kill-switch)"
+            if [ "$KIRIVERS_RELEASE" != yes ]; then
+              echo
+              echo "Nothing releasable since \`${KIRIVERS_PREV}\`: no feat/fix/perf/revert or breaking change, so this run ends without a tag, release or image."
+            fi
+          } >>"$GITHUB_STEP_SUMMARY"
+
+  frontend:
+    name: Frontend dist
+    needs: version
+    if: needs.version.outputs.publish == 'yes'
+    runs-on: ubuntu-latest
+    # vite.config.mts reads the same trio build.py injects into the Go binary.
+    env:
+      KIRIVERS_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - name: Build admin UI
+        run: python3 dev/build/kirivers.py frontend-build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kirivers-frontend-dist
+          path: frontend/dist
+
+  linux-musl:
+    name: Linux musl ${{ matrix.goarch }}
+    needs: [version, frontend]
+    if: needs.version.outputs.publish == 'yes'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            runner: ubuntu-latest
+          - goarch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      KIRIVERS_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: kirivers-frontend-dist
+          path: frontend/dist
+      - name: Require embedded UI
+        run: test -f frontend/dist/index.html
+      - name: Alpine musl CGO build (native, no QEMU)
+        run: python3 dev/build/kirivers.py build-linux-musl ${{ matrix.goarch }} dist/kirivers-linux-${{ matrix.goarch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kirivers-bin-linux-${{ matrix.goarch }}
+          path: dist/kirivers-linux-${{ matrix.goarch }}
+
+  # glibc cross builds: the Go toolchain cross-compiles and only the C++ side
+  # needs a cross compiler, so an amd64 runner produces these without emulation.
+  linux-cross:
+    name: Linux glibc ${{ matrix.goarch }}
+    needs: [version, frontend]
+    if: needs.version.outputs.publish == 'yes'
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [386, arm, riscv64]
+    runs-on: ubuntu-latest
+    env:
+      KIRIVERS_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v4
+        with:
+          name: kirivers-frontend-dist
+          path: frontend/dist
+      - name: Require embedded UI
+        run: test -f frontend/dist/index.html
+      - name: Cross C/C++ toolchain
+        id: tc
+        run: |
+          set -eu
+          eval "$(python3 dev/build/kirivers.py install-cross-toolchains '${{ matrix.goarch }}')"
+          echo "cc=$CC" >>"$GITHUB_OUTPUT"
+          echo "cxx=$CXX" >>"$GITHUB_OUTPUT"
+      - name: CGO cross build
+        env:
+          CC: ${{ steps.tc.outputs.cc }}
+          CXX: ${{ steps.tc.outputs.cxx }}
+        run: python3 dev/build/kirivers.py build-cgo linux '${{ matrix.goarch }}' "dist/kirivers-linux-${{ matrix.goarch }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kirivers-bin-linux-${{ matrix.goarch }}
+          path: dist/kirivers-linux-${{ matrix.goarch }}
+
+  windows:
+    name: Windows ${{ matrix.goarch }}
+    needs: [version, frontend]
+    if: needs.version.outputs.publish == 'yes'
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [386, amd64, arm64]
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      # One source of truth for where the CLI installs the toolchain and where the
+      # cache stores it; if the two disagreed the cache would silently never hit.
+      # Job-level so the cache step's `with:` can read it.
+      LLVM_MINGW_PREFIX: ${{ github.workspace }}/.cache/llvm-mingw
+      # Same key as every other build job: it joins the block above rather than
+      # opening a second job-level env (two blocks would be a YAML duplicate key).
+      KIRIVERS_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v4
+        with:
+          name: kirivers-frontend-dist
+          path: frontend/dist
+      - name: Require embedded UI
+        run: test -f frontend/dist/index.html
+      - name: Cache llvm-mingw
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.LLVM_MINGW_PREFIX }}
+          # The pinned LLVM_MINGW_VERSION lives in build.py, so hashing that file
+          # is hashing the version — without repeating it here. The prefix-restore
+          # fallback is deliberately omitted: it would hand the build an older
+          # toolchain after a bump, which is the one failure mode this cache must
+          # not have (check-workflows refutes it repo-wide).
+          key: llvm-mingw-${{ hashFiles('dev/build/kirivers_build/build.py') }}-${{ runner.os }}-${{ runner.arch }}
+      - name: llvm-mingw on PATH
+        run: |
+          set -eu
+          # `echo "$(…)" >>$GITHUB_PATH` would exit 0 on a failed download and
+          # append an empty line, so the next step would hunt for a compiler that
+          # was never installed. Capture first and let `set -e` abort the job.
+          mingw_bin=$(python dev/build/kirivers.py install-llvm-mingw)
+          printf '%s\n' "$mingw_bin" >>"$GITHUB_PATH"
+      - name: CGO build
+        run: python dev/build/kirivers.py build-cgo windows '${{ matrix.goarch }}' "dist/kirivers-windows-${{ matrix.goarch }}.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kirivers-bin-windows-${{ matrix.goarch }}
+          path: dist/kirivers-windows-${{ matrix.goarch }}.exe
+
+  darwin:
+    name: macOS ${{ matrix.goarch }}
+    needs: [version, frontend]
+    if: needs.version.outputs.publish == 'yes'
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    runs-on: macos-15
+    env:
+      KIRIVERS_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v4
+        with:
+          name: kirivers-frontend-dist
+          path: frontend/dist
+      - name: Require embedded UI
+        run: test -f frontend/dist/index.html
+      - name: Apple clang CGO (real host, never fabricated)
+        run: python3 dev/build/kirivers.py build-cgo darwin '${{ matrix.goarch }}' "dist/kirivers-darwin-${{ matrix.goarch }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kirivers-bin-darwin-${{ matrix.goarch }}
+          path: dist/kirivers-darwin-${{ matrix.goarch }}
+
+  package:
+    name: Package archives
+    needs: [version, frontend, linux-musl, linux-cross, windows, darwin]
+    if: needs.version.outputs.publish == 'yes'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kirivers-bin-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: kirivers-frontend-dist
+          path: dist/frontend-dist
+      - name: Build every archive
+        run: python3 dev/build/kirivers.py package-assets dist assets
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kirivers-assets
+          path: assets
+
+  github-release:
+    name: GitHub Release + CHANGELOG
+    needs: [version, package]
+    if: needs.version.outputs.publish == 'yes'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch annotated tags
+        run: git fetch --tags --force origin
+      - uses: actions/download-artifact@v4
+        with:
+          name: kirivers-assets
+          path: dist
+      - name: Require the full asset set
+        run: |
+          set -eu
+          missing=0
+          for name in $(python3 dev/build/kirivers.py asset-names); do
+            # Archive names embed a content hash, so match on the prefix.
+            pattern=$(printf '%s' "dist/$name" | sed 's/-<sha6>\.zip/-*.zip/')
+            if ! ls $pattern >/dev/null 2>&1; then
+              echo "missing $pattern" >&2
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          test "$(ls dist/*.zip | wc -l)" -eq 11
+      - name: Release notes
+        id: notes
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          PREV: ${{ needs.version.outputs.prev }}
+          SHA: ${{ github.sha }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -eu
+          python3 dev/build/kirivers.py release-notes --version "$VERSION" "$PREV" "$SHA" >dist/RELEASE_NOTES.md
+          cat dist/RELEASE_NOTES.md >>"$GITHUB_STEP_SUMMARY"
+      - name: Tag and push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          tag="v${VERSION}"
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            tag -a "$tag" -m "$tag" "$SHA"
+          git push origin "$tag"
+      - name: Publish GitHub Release via softprops/action-gh-release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          name: v${{ needs.version.outputs.version }}
+          body_path: dist/RELEASE_NOTES.md
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+          draft: false
+          prerelease: false
+      - name: Append CHANGELOG.md on main
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          PREV: ${{ needs.version.outputs.prev }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          git fetch origin main
+          git checkout -B main refs/remotes/origin/main
+          python3 dev/build/kirivers.py changelog --version "$VERSION" "$PREV" "$SHA"
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "CHANGELOG.md already carries v${VERSION}" >&2
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "docs(release): v${VERSION} changelog"
+          git push origin HEAD:main
+
+  docker-amd64:
+    name: Image linux/amd64
+    needs: [version, github-release]
+    if: needs.version.outputs.publish == 'yes'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: kirivers-bin-linux-amd64
+          path: dist
+      - name: Stage prebuilt binary
+        run: cp dist/kirivers-linux-amd64 ./kirivers-linux-amd64
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push linux/amd64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dev/build/Dockerfile
+          target: runtime
+          build-args: |
+            USE_PREBUILT=1
+            TARGETARCH=amd64
+          push: true
+          tags: kirizuofficial/kirivers:${{ needs.version.outputs.version }}_amd64
+
+  docker-arm64:
+    name: Image linux/arm64
+    needs: [version, github-release]
+    if: needs.version.outputs.publish == 'yes'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: kirivers-bin-linux-arm64
+          path: dist
+      - name: Stage prebuilt binary
+        run: cp dist/kirivers-linux-arm64 ./kirivers-linux-arm64
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push linux/arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dev/build/Dockerfile
+          target: runtime
+          build-args: |
+            USE_PREBUILT=1
+            TARGETARCH=arm64
+          push: true
+          tags: kirizuofficial/kirivers:${{ needs.version.outputs.version }}_arm64
+
+  docker-manifest:
+    name: Multi-arch manifest
+    needs: [version, docker-amd64, docker-arm64]
+    if: needs.version.outputs.publish == 'yes'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Compose latest and versioned manifests
+        run: |
+          docker buildx imagetools create \
+            -t kirizuofficial/kirivers:latest \
+            -t kirizuofficial/kirivers:${{ needs.version.outputs.version }} \
+            kirizuofficial/kirivers:${{ needs.version.outputs.version }}_amd64 \
+            kirizuofficial/kirivers:${{ needs.version.outputs.version }}_arm64

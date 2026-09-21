@@ -1,0 +1,67 @@
+
+log:
+  level: info
+  console:
+    enabled: true
+    no_color: false
+  file:
+    enabled: true
+    dir: /data/logs
+    filename: kirivers.log
+    max_size_mb: 100
+    max_backups: 10
+    max_age_days: 28
+    compress: true
+    local_time: true
+
+postgres:
+  dsn: "host=postgres user=kirivers password=CHANGE_ME dbname=kirivers port=5432 sslmode=disable TimeZone=UTC"
+
+storage:
+  driver: local
+  local:
+    root: /data/storage
+  s3:
+    endpoint: ""
+    region: auto
+    bucket: ""
+    access_key: ""
+    secret_key: ""
+    use_path_style: true
+    public_base_url: ""
+
+node:
+  display_name: ""
+
+cluster:
+  download: s3
+
+security:
+  session_idle_hours: 72
+  login_pending_ttl_seconds: 600
+  totp_max_attempts_per_period: 10
+  webauthn_rp_id: ""
+  webauthn_origins: []
+
+url_signing_secret: "CHANGE_ME_SIGNING"
+
+jobs:
+  workers: 2
+
+dynamic_pack:
+  max_bytes: 536870912
+
+file_list:
+  max_files: 16
+
+changelog:
+  default_entries: 5
+  max_entries: 50
+
+cache:
+  driver: redis
+  redis:
+    addr: "redis:6379"
+    password: ""
+    db: 0
+    reconnect_interval_minutes: 10
