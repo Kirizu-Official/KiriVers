@@ -1,0 +1,43 @@
+import{Rt as e,dt as t,mt as n,n as r}from"./chunks/framework.BkIgthgQ.js";var i=JSON.parse(`{"title":"Repository layout","description":"Live default-branch tree. Includes frontend/embed.go and internal/delta. No language SDK sources on default branch.","frontmatter":{"title":"Repository layout","description":"Live default-branch tree. Includes frontend/embed.go and internal/delta. No language SDK sources on default branch."},"headers":[],"relativePath":"en/contribute/repo-layout.md","filePath":"en/contribute/repo-layout.md","lastUpdated":1790057721000}`),a={name:`en/contribute/repo-layout.md`};function o(r,i,a,o,s,c){return e(),t(`div`,null,[...i[0]||=[n(`<h1 id="repository-layout" tabindex="-1">Repository layout <a class="header-anchor" href="#repository-layout" aria-label="Permalink to “Repository layout”">​</a></h1><p>This matches the default-branch tree. Language SDKs are <strong>not</strong> here. <code>.trellis/</code> is maintainer/AI workflow, not a required contributor path. GitHub is the only forge: checks and releases live in <code>.github/workflows/</code>, there is no second pipeline definition in the repo.</p><div class="language-text line-numbers-mode"><button title="Copy code" data-copied="Copied" class="copy"></button><span class="lang">text</span><pre class="shiki shiki-themes github-light github-dark" style="--shiki-light:#24292e;--shiki-dark:#e1e4e8;--shiki-light-bg:#fff;--shiki-dark-bg:#24292e;" tabindex="0" dir="ltr"><code><span class="line"><span>main.go                 # delegates to cmd.Run()</span></span>
+<span class="line"><span>CHANGELOG.md            # changelog sections inserted by the release job (appears after the first release); never hand-edit</span></span>
+<span class="line"><span>cmd/                    # server / admin / listen (listen is not a CLI command)</span></span>
+<span class="line"><span>configs/                # *-example.yaml; local yaml gitignored</span></span>
+<span class="line"><span>internal/</span></span>
+<span class="line"><span>  cache/</span></span>
+<span class="line"><span>  config/</span></span>
+<span class="line"><span>  controller/           # admin/ + client/ + openapi.*.json</span></span>
+<span class="line"><span>  database/</span></span>
+<span class="line"><span>  delta/                # delta engines</span></span>
+<span class="line"><span>  logger/</span></span>
+<span class="line"><span>  middleware/</span></span>
+<span class="line"><span>  model/</span></span>
+<span class="line"><span>  platform/</span></span>
+<span class="line"><span>  repository/</span></span>
+<span class="line"><span>  service/              # includes update/, store/</span></span>
+<span class="line"><span>  storage/              # local + s3</span></span>
+<span class="line"><span>pkg/</span></span>
+<span class="line"><span>  hashutil/ pathutil/ response/ semver/</span></span>
+<span class="line"><span>  signature/ urlsign/ webhook/ grayutil/</span></span>
+<span class="line"><span>frontend/               # Vue admin; embed.go embeds dist; daily yarn dev</span></span>
+<span class="line"><span>frontend/embed.go</span></span>
+<span class="line"><span>frontend/dist/.gitkeep</span></span>
+<span class="line"><span>docs/                   # internal notes (not the VitePress root)</span></span>
+<span class="line"><span>dev/docker/             # developer Postgres/Redis</span></span>
+<span class="line"><span>dev/build/              # runtime Dockerfile and the release CLI (no shell scripts, no Compose)</span></span>
+<span class="line"><span>  Dockerfile            # Alpine runtime image, build context = repo root</span></span>
+<span class="line"><span>  changelog-types.conf  # section emoji/labels — display only, never feeds version derivation</span></span>
+<span class="line"><span>  kirivers.py           # single entry point: python3 dev/build/kirivers.py &lt;command&gt; (python on Windows)</span></span>
+<span class="line"><span>  kirivers_build/       # standard-library package, one module per concern; subcommand names keep the old script names</span></span>
+<span class="line"><span>    cli.py              # subcommand registry and dispatch (usage and exit-code conventions)</span></span>
+<span class="line"><span>    common.py           # single definition of the platform matrix, inner binary and archive names, \`file\` patterns, sha256</span></span>
+<span class="line"><span>    build.py            # build-cgo / build-linux-musl / assert-linux-musl / install-cross-toolchains / install-llvm-mingw / frontend-build</span></span>
+<span class="line"><span>    version.py          # next-version: derive the next version from Conventional Commits</span></span>
+<span class="line"><span>    notes.py            # release-notes (Release body and CHANGELOG section) plus the changelog write-back</span></span>
+<span class="line"><span>    package.py          # asset-names and package-assets (zips + SHA256SUMS.txt)</span></span>
+<span class="line"><span>    images.py           # docker-image (native per-arch build, pushes &lt;semver&gt;_amd64 / _arm64) and docker-manifest</span></span>
+<span class="line"><span>    guards.py           # commitlint / issue-link (PRs into main must link an issue) / guard (decision matrix)</span></span>
+<span class="line"><span>    selfcheck.py        # check-workflows: static gate on the workflows (triggers, matrix, no QEMU)</span></span>
+<span class="line"><span>.github/workflows/      # ci.yml (PR + main push checks), pr-guard.yml, gosec-scan.yml + security-gate.yml (sandboxed Gosec scan and ready-merge state machine), docs-pages.yml (compiles website/** and publishes gh-pages), release.yml (manual workflow_dispatch only), sdk-automerge.yml (manual only; batch-merges sdk/* PRs, releases and pushes to registries)</span></span>
+<span class="line"><span>website/                # official docs site</span></span>
+<span class="line"><span>deploy/                 # operator one-click Compose (.env credentials + bundled YAML)</span></span>
+<span class="line"><span>scripts/install-deps.sh</span></span></code></pre><div class="line-numbers-wrapper" aria-hidden="true"><span class="line-number">1</span><br><span class="line-number">2</span><br><span class="line-number">3</span><br><span class="line-number">4</span><br><span class="line-number">5</span><br><span class="line-number">6</span><br><span class="line-number">7</span><br><span class="line-number">8</span><br><span class="line-number">9</span><br><span class="line-number">10</span><br><span class="line-number">11</span><br><span class="line-number">12</span><br><span class="line-number">13</span><br><span class="line-number">14</span><br><span class="line-number">15</span><br><span class="line-number">16</span><br><span class="line-number">17</span><br><span class="line-number">18</span><br><span class="line-number">19</span><br><span class="line-number">20</span><br><span class="line-number">21</span><br><span class="line-number">22</span><br><span class="line-number">23</span><br><span class="line-number">24</span><br><span class="line-number">25</span><br><span class="line-number">26</span><br><span class="line-number">27</span><br><span class="line-number">28</span><br><span class="line-number">29</span><br><span class="line-number">30</span><br><span class="line-number">31</span><br><span class="line-number">32</span><br><span class="line-number">33</span><br><span class="line-number">34</span><br><span class="line-number">35</span><br><span class="line-number">36</span><br><span class="line-number">37</span><br><span class="line-number">38</span><br><span class="line-number">39</span><br><span class="line-number">40</span><br><span class="line-number">41</span><br><span class="line-number">42</span><br><span class="line-number">43</span><br></div></div>`,3)]])}var s=r(a,[[`render`,o]]);export{i as __pageData,s as default};
