@@ -41,12 +41,22 @@ _BUILDINFO_PKG = "github.com/Kirizu-Official/KiriVers/internal/buildinfo"
 # (Go symbol, source env var, fallback when the env var is unset). Order is the
 # emitted flag order, so two runs on one host produce one ldflags string.
 # commit deliberately defaults to empty: "no value" means "do not inject a -X
-# at all" and internal/buildinfo falls back to the VCS stamp / unknown.
+# at all" and internal/buildinfo falls back to the VCS stamp / unknown. The
+# injected value may be a full 40-char SHA (release.yml injects `github.sha`
+# because the Actions expression language has no string-slicing function), so
+# every commit value passes through _short_commit() below.
 _STAMP_VARS = (
     ("version", "KIRIVERS_VERSION", "dev"),
     ("commit", "KIRIVERS_BUILD_COMMIT", ""),
     ("buildTime", "KIRIVERS_BUILD_TIME", "unknown"),
 )
+
+# The single width every KiriVers build reports for its commit. It mirrors
+# `commitShortLen` in internal/buildinfo/buildinfo.go, which does the same trim
+# to a `debug.ReadBuildInfo()` VCS stamp; `git rev-parse --short` picks its own
+# width from the object count, so this constant -- not git -- is what keeps an
+# injected SHA and a local build the same shape.
+_COMMIT_SHORT_LEN = 7
 
 # cmd/go splits the -ldflags value on whitespace and honours its own quote
 # syntax, so an injected value carrying a space, a quote or an "=" would split
@@ -118,6 +128,11 @@ def _git_short_commit() -> str:
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
+def _short_commit(revision: str) -> str:
+    """Trim a revision to _COMMIT_SHORT_LEN, the width internal/buildinfo uses."""
+    return revision[:_COMMIT_SHORT_LEN]
+
+
 def _stamp_flags() -> str | None:
     """Build the `-X …` tail from KIRIVERS_{VERSION,BUILD_COMMIT,BUILD_TIME}.
 
@@ -140,6 +155,11 @@ def _stamp_flags() -> str | None:
                 "cmd/go splits the -ldflags value on whitespace"
             )
             return None
+        # Checked before the trim, never after: shortening first would let a
+        # value whose offending character sits past the cut-through slip through
+        # the guard above.
+        if go_name == "commit":
+            value = _short_commit(value)
         parts.append(f"-X {_BUILDINFO_PKG}.{go_name}={value}")
     return " ".join(parts)
 
@@ -647,11 +667,15 @@ def frontend_build(argv: list[str]) -> int:
     status = common.run([_tool("yarn"), "install", "--frozen-lockfile"], cwd=frontend)
     if status:
         return status
-    # No new argument here on purpose: `common.run(env=None)` inherits the
-    # environment, and vite.config reads the very same KIRIVERS_{VERSION,
-    # BUILD_COMMIT,BUILD_TIME} trio the Go build injects above. One release thus
-    # stamps the frontend and the binary from one source.
-    status = common.run([_tool("yarn"), "build"], cwd=frontend)
+    # vite.config reads the very same KIRIVERS_{VERSION,BUILD_COMMIT,BUILD_TIME}
+    # trio the Go build injects above, so one release stamps the frontend and the
+    # binary from one source -- except that vite uses the injected commit verbatim
+    # while `cmd/link` hands the trim to internal/buildinfo. Truncate here, so the
+    # width rule stays in this file for both halves of an artifact.
+    env = os.environ.copy()
+    if env.get("KIRIVERS_BUILD_COMMIT"):
+        env["KIRIVERS_BUILD_COMMIT"] = _short_commit(env["KIRIVERS_BUILD_COMMIT"])
+    status = common.run([_tool("yarn"), "build"], cwd=frontend, env=env)
     if status:
         return status
     if not (frontend / "dist" / "index.html").is_file():

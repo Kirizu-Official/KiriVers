@@ -16,12 +16,14 @@ pull request.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
 from pathlib import Path
 
 from . import common
@@ -30,15 +32,32 @@ from . import common
 
 # Pinned so every job resolves the same CLI and ruleset (as the shell did); the
 # Conventional Commits ruleset stays @commitlint/config-conventional's job — a
-# Python re-implementation would drift (research §1.5).
-COMMITLINT_PACKAGES = ("@commitlint/cli@19.8.1", "@commitlint/config-conventional@19.8.1")
+# Python re-implementation would drift (research §1.5). One version constant,
+# because the tool directory name is derived from it.
+COMMITLINT_VERSION = "19.8.1"
+COMMITLINT_PACKAGES = (
+    f"@commitlint/cli@{COMMITLINT_VERSION}",
+    f"@commitlint/config-conventional@{COMMITLINT_VERSION}",
+)
+
+# Name of the config this CLI writes next to the installed packages. It is not
+# the tracked commitlint.config.cjs; _commitlint_config_text explains why the
+# loader has to be handed a file that sits inside the tool directory.
+COMMITLINT_GENERATED_CONFIG = "kirivers.commitlint.config.cjs"
 
 COMMITLINT_USAGE = """usage: kirivers.py commitlint
+       kirivers.py commitlint --self-check
 Env: COMMITLINT_TITLE  pull request title, linted over stdin when set
      COMMITLINT_FROM   git range start (exclusive, commitlint --from)
      COMMITLINT_TO     git range end (inclusive)
 Push events report before/after, where before is all zeros on a new branch and
-unreachable after a force push; both degrade to the tip commit only."""
+unreachable after a force push; both degrade to the tip commit only.
+Exit: 0 verdict-pass, 1 verdict-fail, 2 the tool itself could not run. A 2 is
+never a verdict, so pr-guard must not police the pull request over it.
+Commitlint is installed on demand into <os-cache>/kirivers/commitlint-<version>,
+where <os-cache> is %LOCALAPPDATA% on Windows, ~/Library/Caches on macOS, and
+$XDG_CACHE_HOME or ~/.cache elsewhere. The directory name carries the version, so
+a pin bump can never load the previous version's tree."""
 
 # A `before` of 40 zeros is how GitHub says "the branch did not exist yet".
 _ZERO_BEFORE = "0" * 40
@@ -47,26 +66,30 @@ _ZERO_BEFORE = "0" * 40
 def _tool(name: str) -> str | None:
     """Absolute path of a child executable, or None.
 
-    Windows CreateProcess only appends `.exe`, so `.cmd` shims such as `npx`
+    Windows CreateProcess only appends `.exe`, so `.cmd` shims such as `npm`
     have to be resolved through PATH by us instead.
     """
     return shutil.which(name)
 
 
-def _spawn(command: list[str], stdin_bytes: bytes | None = None) -> int:
+def _spawn(
+    command: list[str], stdin_bytes: bytes | None = None, *, quiet: bool = False
+) -> int:
     """Run a child, diverting its stdout into our stderr (C12).
 
     commitlint's human report must never land on our stdout, and stdin is given
     as bytes so a non-ASCII commit subject survives every host locale. A child we
     cannot even start reports 127, the shell's "command not found", so the caller
-    reads it as a tooling fault instead of a lint verdict (D5).
+    reads it as a tooling fault instead of a lint verdict (D5). `quiet` throws the
+    child's output away, which is what the health probe wants: its stdout is the
+    whole resolved config, and 150 lines of it per run is noise, not a report.
     """
     try:
         proc = subprocess.run(
             command,
             cwd=str(common.ROOT),
             input=stdin_bytes,
-            stdout=sys.stderr,
+            stdout=sys.stderr if not quiet else subprocess.DEVNULL,
             check=False,
         )
     except OSError as error:
@@ -101,60 +124,336 @@ def _git_verify(revision: str) -> bool:
     return proc.returncode == 0
 
 
-def _npx_commitlint(extra: list[str], stdin_bytes: bytes | None = None) -> int:
-    command = [_tool("npx"), "--yes"]
-    for package in COMMITLINT_PACKAGES:
-        command += ["--package", package]
-    command += ["commitlint", "--config", str(common.ROOT / "commitlint.config.cjs")]
-    return _spawn(command + extra, stdin_bytes)
+def _cache_root() -> Path:
+    """The OS cache directory for maintainer-side tool downloads.
+
+    Deliberately outside the repository: this worktree is shared, `go build` and
+    `git status` have no business seeing a node_modules tree, and a warm cache
+    makes the second and later runs in a day cost one probe instead of an install.
+    """
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA")
+        return Path(local) if local else Path.home() / "AppData" / "Local"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches"
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    return Path(xdg) if xdg else Path.home() / ".cache"
 
 
-def _lint_tip_only(to: str) -> int:
+def _commitlint_dir() -> Path:
+    """Version-keyed home for the pinned commitlint tree (see COMMITLINT_USAGE)."""
+    return _cache_root() / "kirivers" / f"commitlint-{COMMITLINT_VERSION}"
+
+
+def _commitlint_paths(directory: Path) -> tuple[Path, Path]:
+    """The two files one commitlint run needs inside an installed tree."""
+    # npm's .bin shim is a `.cmd` on Windows, and an absolute path to it is what
+    # CreateProcess will actually run (see _tool).
+    shim = "commitlint.cmd" if os.name == "nt" else "commitlint"
+    return (
+        directory / "node_modules" / ".bin" / shim,
+        directory / COMMITLINT_GENERATED_CONFIG,
+    )
+
+
+def _commitlint_config_text() -> str:
+    """The generated config: a delegation, never a restatement of any rule.
+
+    @commitlint/load resolves a bare `extends` name from the directory of the file
+    it was handed (--config wins over discovery), falling back only to the global
+    npm prefix. That is why `npx --package` could never work here: it installs to
+    ~/.npm/_npx/<hash>/node_modules while the tracked config sits at the repo root,
+    which has no node_modules at all, so a clean runner died on MODULE_NOT_FOUND and
+    exit 1 read as "your title is wrong". Requiring the tracked file from inside the
+    tool directory fixes the resolution base and keeps commitlint.config.cjs the only
+    place the ruleset is written down.
+    """
+    tracked = json.dumps(str(common.ROOT / "commitlint.config.cjs"))
+    return f"module.exports = require({tracked});\n"
+
+
+def _write_commitlint_config(directory: Path) -> bool:
+    """Refresh the generated config, but only when it changed (or is missing).
+
+    Reports an unwritable target as False instead of raising: `cli.main()` has no
+    exception handler, so an escaping OSError would exit 1 -- the very code
+    pr-guard reads as "your title is wrong" and closes a conforming pull request
+    over. The caller turns a False into the 2 it is contractually supposed to
+    return (R4/AC5).
+    """
+    config = directory / COMMITLINT_GENERATED_CONFIG
+    text = _commitlint_config_text()
+    try:
+        if config.is_file() and config.read_text(encoding="utf-8") == text:
+            return True
+        common.write_lf(config, text)
+    except OSError as error:
+        common.log(f"commitlint: cannot write {config}: {error}")
+        return False
+    return True
+
+
+def _probe_commitlint(directory: Path) -> int:
+    """0 when the pinned commitlint loads its ruleset; anything else is a fault.
+
+    `--print-config` runs the whole config load, including the `extends` lookup that
+    used to fail, and never judges a commit. That separation is the point: commitlint
+    rethrows any load error and Node exits 1, which is exactly what a real rule
+    violation exits with, so without this probe a broken install would be reported as
+    a bad pull request title (and closed by pr-guard).
+    """
+    binary, config = _commitlint_paths(directory)
+    if not binary.is_file() or not config.is_file():
+        return 127
+    return _spawn([str(binary), "--config", str(config), "--print-config"], b"", quiet=True)
+
+
+def _install_commitlint(directory: Path) -> int:
+    """One pinned tree into `directory`, with no package.json or lockfile left behind."""
+    npm = _tool("npm")
+    if npm is None:
+        common.log("npm is required for commitlint")
+        return 127
+    return _spawn(
+        [
+            npm,
+            "install",
+            "--prefix",
+            str(directory),
+            "--no-save",
+            "--no-package-lock",
+            "--no-audit",
+            "--no-fund",
+            "--loglevel",
+            "error",
+            *COMMITLINT_PACKAGES,
+        ]
+    )
+
+
+def _ensure_commitlint() -> Path | None:
+    """Directory holding a working commitlint, or None (the caller's tooling fault).
+
+    The install goes into a sibling temp directory and is published by rename, so a
+    concurrent run -- a second commitlint invocation in one CI job, or a parallel
+    session on this worktree sharing the cache -- can never observe a half-installed
+    tree: it either sees nothing or a complete one. Ours is probed before it is
+    published, so a broken tree is discarded rather than cached.
+    """
+    target = _commitlint_dir()
+    if not (common.ROOT / "commitlint.config.cjs").is_file():
+        # The generated config requires this file, so a probe failure would be
+        # reported as an install problem and cost a needless reinstall. One line
+        # here beats a Node MODULE_NOT_FOUND stack trace in the job log.
+        common.log("commitlint: commitlint.config.cjs is missing; the ruleset has no source")
+        return None
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        common.log(f"commitlint: cannot create {target}: {error}")
+        return None
+    # Written before the probe: the probe loads this file, and rewriting it keeps a
+    # cache that outlived a moved checkout honest instead of mysteriously broken.
+    if not _write_commitlint_config(target):
+        return None
+    if _probe_commitlint(target) == 0:
+        return target
+
+    staging = target.parent / f"{target.name}.tmp-{os.getpid()}"
+    shutil.rmtree(staging, ignore_errors=True)
+    try:
+        if _install_commitlint(staging):
+            common.log("commitlint: npm install failed")
+            shutil.rmtree(staging, ignore_errors=True)
+            return None
+        if not _write_commitlint_config(staging):
+            shutil.rmtree(staging, ignore_errors=True)
+            return None
+        if _probe_commitlint(staging):
+            common.log("commitlint: the freshly installed tree does not load its ruleset")
+            shutil.rmtree(staging, ignore_errors=True)
+            return None
+        try:
+            shutil.rmtree(target, ignore_errors=True)  # only ever removes an empty/probe-failed dir
+            os.rename(staging, target)
+        except OSError:
+            # Someone else published the same pin first; their tree is complete by
+            # construction, so use it and drop ours.
+            shutil.rmtree(staging, ignore_errors=True)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    return target if _probe_commitlint(target) == 0 else None
+
+
+def _commitlint_run(
+    directory: Path, extra: list[str], stdin_bytes: bytes | None = None
+) -> int:
+    """One commitlint invocation against the installed tree (C12 stdout handling)."""
+    binary, config = _commitlint_paths(directory)
+    return _spawn([str(binary), "--config", str(config), *extra], stdin_bytes)
+
+
+def _lint_tip_only(directory: Path, to: str) -> int:
     """Lint only the tip: with no parent it is a root commit, so feed its subject."""
     if _git_verify(to + "^{commit}") and _git_verify(to + "^"):
-        return _npx_commitlint(["--from", to + "^", "--to", to])
+        return _commitlint_run(directory, ["--from", to + "^", "--to", to])
     # Root commit: the shell piped `git log -1 --format=%s` straight into commitlint.
-    return _npx_commitlint([], _git(["log", "-1", "--format=%s", to]))
+    return _commitlint_run(directory, [], _git(["log", "-1", "--format=%s", to]))
+
+
+def _commitlint_self_check() -> int:
+    """The offline half of the commit gate: layout, delegation, fault signalling.
+
+    Nothing here shells out, so the suite stays runnable without npm or a network --
+    which is what `_check_offline_suites` in selfcheck.py requires.
+    """
+    failed = 0
+
+    def expect(ok: bool, message: str) -> None:
+        nonlocal failed
+        if not ok:
+            common.log(f"FAIL: {message}")
+            failed = 1
+
+    directory = _commitlint_dir()
+    expect(
+        directory.name == f"commitlint-{COMMITLINT_VERSION}",
+        "the tool directory name must carry the pinned version",
+    )
+    expect(
+        _cache_root() in directory.parents,
+        "the tool directory must sit under the OS cache root",
+    )
+    expect(
+        common.ROOT not in directory.parents,
+        "the tool directory must not live in the repository",
+    )
+
+    binary, config = _commitlint_paths(directory)
+    expect(
+        binary.name.endswith(".cmd") == (os.name == "nt"),
+        "the npm bin shim must match the platform's variant",
+    )
+    expect(config.name == COMMITLINT_GENERATED_CONFIG, "the generated config name is a contract")
+    expect(
+        all(p.endswith(f"@{COMMITLINT_VERSION}") for p in COMMITLINT_PACKAGES),
+        "every pinned package must name COMMITLINT_VERSION, or the cache key lies",
+    )
+
+    text = _commitlint_config_text()
+    tracked = json.dumps(str(common.ROOT / "commitlint.config.cjs"))
+    expect(
+        text == f"module.exports = require({tracked});\n",
+        "the generated config must delegate to the tracked file and nothing else",
+    )
+    for forbidden in ("extends", "rules", "parserPreset", "config-conventional"):
+        expect(forbidden not in text, f"the generated config must not restate rules ({forbidden})")
+    expect(
+        (common.ROOT / "commitlint.config.cjs").is_file(),
+        "commitlint.config.cjs is the single ruleset declaration",
+    )
+
+    workspace = Path(tempfile.mkdtemp(prefix="kirivers-commitlint-selfcheck-"))
+    try:
+        empty = workspace / "nothing-installed"
+        empty.mkdir()
+        expect(
+            _write_commitlint_config(empty) is True,
+            "a writable tool directory must report success",
+        )
+        # No tree yet: the probe must report a tooling fault, not a lint verdict.
+        expect(_probe_commitlint(empty) != 0, "a missing install must not probe healthy")
+        expect(
+            _probe_commitlint(workspace.parent / "definitely-not-here") != 0,
+            "a missing directory must not probe healthy",
+        )
+        written = (empty / COMMITLINT_GENERATED_CONFIG).read_text(encoding="utf-8")
+        expect(written == text, "the generated config must be written verbatim")
+        expect("\r" not in written, "the generated config must be LF-only")
+
+        # R4/AC5: an unwritable config is a fault the caller turns into a 2. It must
+        # not escape as a traceback, because cli.main() exits 1 on an uncaught
+        # exception and pr-guard reads 1 as "bad title" and closes the pull request.
+        blocked = workspace / "blocked"
+        blocked.mkdir()
+        (blocked / COMMITLINT_GENERATED_CONFIG).mkdir()
+        expect(
+            _write_commitlint_config(blocked) is False,
+            "an unwritable config must be reported, not raised",
+        )
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+    if failed:
+        common.log("commitlint: self-check FAILED")
+        return common.FAIL_EXIT
+    common.log("commitlint: self-check ok")
+    return 0
+
+
+def _commitlint_verdict(title: str, frm: str, to: str) -> int:
+    """Lint the title and then the range; 0 pass, 1 verdict, 2 tooling fault."""
+    directory = _ensure_commitlint()
+    if directory is None:
+        # Same reasoning as D5 and the message pr-guard's `error` branch exists for:
+        # an install we could not complete says nothing about anyone's commit message.
+        common.log("commitlint: no usable installation; this is a tooling fault, not a verdict")
+        return common.USAGE_EXIT
+
+    if title:
+        status = _commitlint_run(directory, [], title.encode("utf-8") + b"\n")
+        if status:
+            return status  # `set -e`: a bad title never reaches the range branch
+
+    if to:
+        if not frm or frm.startswith(_ZERO_BEFORE):
+            common.log(f"commitlint: no usable range start, linting only {to}")
+            status = _lint_tip_only(directory, to)
+        elif not _git_verify(frm + "^{commit}"):
+            common.log(f"commitlint: {frm} is not reachable here, linting only {to}")
+            status = _lint_tip_only(directory, to)
+        else:
+            status = _commitlint_run(directory, ["--from", frm, "--to", to])
+        if status:
+            return status
+    return 0
 
 
 def commitlint(argv: list[str]) -> int:
-    """Env-driven wrapper around `npx commitlint`.
+    """Env-driven wrapper around the pinned commitlint CLI.
 
-    The .sh ignored every argument, so this does too; only --help is handled, to
-    keep the three guard subcommands discoverable from one entrypoint.
+    The .sh ignored every argument, so this does too; only --help and --self-check
+    are handled, to keep the three guard subcommands discoverable from one entrypoint.
     """
     if any(arg in ("-h", "--help") for arg in argv):
         common.log(COMMITLINT_USAGE)
         return 0
-    if _tool("npx") is None:
+    if "--self-check" in argv:
+        return _commitlint_self_check()
+    if _tool("npm") is None:
         # D5: a missing tool is a tooling fault (2), not a lint failure (1).
-        common.log("npx is required for commitlint")
+        common.log("npm is required for commitlint")
         return common.USAGE_EXIT
-
     title = os.environ.get("COMMITLINT_TITLE", "")
-    if title:
-        status = _npx_commitlint([], title.encode("utf-8") + b"\n")
-        if status:
-            return status  # `set -e`: a bad title never reaches the range branch
-
     to = os.environ.get("COMMITLINT_TO", "")
     frm = os.environ.get("COMMITLINT_FROM", "")
-    if to:
-        if not frm or frm.startswith(_ZERO_BEFORE):
-            common.log(f"commitlint: no usable range start, linting only {to}")
-            status = _lint_tip_only(to)
-        elif not _git_verify(frm + "^{commit}"):
-            common.log(f"commitlint: {frm} is not reachable here, linting only {to}")
-            status = _lint_tip_only(to)
-        else:
-            status = _npx_commitlint(["--from", frm, "--to", to])
-        if status:
-            return status
-
     if not title and not to:
+        # Checked before anything is installed: without a title or a range there is
+        # no verdict to compute, and a 20-second npm install would only bury the
+        # "set COMMITLINT_TITLE and/or COMMITLINT_TO" hint this returns for.
         common.log("set COMMITLINT_TITLE and/or COMMITLINT_TO (with optional COMMITLINT_FROM)")
         return common.USAGE_EXIT
-    return 0
+    try:
+        return _commitlint_verdict(title, frm, to)
+    except Exception as error:  # noqa: BLE001 -- the exit-code contract outranks the bug
+        # Every way this gate breaks on its own has to be a 2. `cli.main()` lets an
+        # exception escape as exit 1, and 1 is the verdict code pr-guard polices:
+        # an unwritable cache directory would have commented on and closed someone's
+        # healthy pull request. The traceback still goes to stderr, so the fault
+        # stays diagnosable -- it just can never be judgeable.
+        common.log(f"commitlint: {type(error).__name__}: {error}")
+        traceback.print_exc()
+        return common.USAGE_EXIT
 
 
 # -------------------------------------------------------------------- issue-link

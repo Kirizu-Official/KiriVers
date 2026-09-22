@@ -10,7 +10,7 @@ Update this file whenever any of these change:
 
 - `internal/buildinfo/` (symbols, accessors, fallback rules)
 - `GET /api/v1/admin/build-info` or its `BuildInfo` schema
-- `dev/build/kirivers_build/build.py` ldflags assembly (`_BUILDINFO_PKG`, `_STAMP_VARS`, `_STAMP_VALUE_RE`, `_ldflags`)
+- `dev/build/kirivers_build/build.py` ldflags assembly (`_BUILDINFO_PKG`, `_STAMP_VARS`, `_STAMP_VALUE_RE`, `_COMMIT_SHORT_LEN` / `_short_commit`, `_ldflags`)
 - `dev/build/Dockerfile` `-X` splicing, or the `KIRIVERS_*` env blocks in `.github/workflows/release.yml`
 - `frontend/vite.config.mts` `__BUILD_INFO__`, or `frontend/src/composables/useBuildInfo.ts`
 
@@ -48,10 +48,26 @@ func CgoEnabled() bool    // build-tag const (cgo.go / nocgo.go), never -X
 | Key | Default in `build.py` | CI source |
 |---|---|---|
 | `KIRIVERS_VERSION` | `dev` | per build job: `needs.version.outputs.version` |
-| `KIRIVERS_BUILD_COMMIT` | unset → best-effort `git rev-parse --short HEAD`; still empty → **omit the `-X`** | workflow level: `substring(github.sha, 0, 7)` |
+| `KIRIVERS_BUILD_COMMIT` | unset → best-effort `git rev-parse --short HEAD`; still empty → **omit the `-X`** | workflow level: `github.sha` (full 40 hex) — `build.py` trims it |
 | `KIRIVERS_BUILD_TIME` | `unknown` | workflow level: `github.run_started_at` |
 
-One run shares the commit/time at workflow level so all 11 artifacts plus `dist` carry one stamp; per-job clocks would make operators read eleven builds. The commit width matches `_git_short_commit()` and `commitShortLen` — a raw 40-char SHA is wrong here.
+One run shares the commit/time at workflow level so all 11 artifacts plus `dist` carry one stamp; per-job clocks would make operators read eleven builds.
+
+> **Warning — never slice the SHA in YAML.** The Actions expression language has no
+> string-slicing function, so `${{ substring(github.sha, 0, 7) }}` is not a wrong value,
+> it is an unparsable file: GitHub reports `Unrecognized function: 'substring'` and **no
+> job in the workflow can start**. `check-workflows` rejects any function name outside
+> `ACTIONS_FUNCTIONS` for exactly this reason — in a `${{ … }}` **and** in an `if:`,
+> whose value GitHub evaluates as an expression even when nobody writes the braces.
+> The width is decided once, by
+> `_COMMIT_SHORT_LEN` / `_short_commit()` in `build.py`, which trims both the injected
+> value and the `git rev-parse --short` fallback (git picks that abbreviation's length
+> from the object count, so it is *not* a reliable 7). This mirrors `commitShortLen` in
+> `internal/buildinfo/buildinfo.go`, which trims a VCS stamp the same way.
+> `frontend-build` forwards the trimmed value into the Vite environment, because
+> `frontend/vite.config.mts:43` uses `KIRIVERS_BUILD_COMMIT` verbatim.
+> The charset guard `_STAMP_VALUE_RE` runs **before** the trim: slicing first would let a
+> value whose offending character sits past the cut-through reach the linker.
 
 **Response 200** — bare payload, no success envelope (`pkg/response`):
 

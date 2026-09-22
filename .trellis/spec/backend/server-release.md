@@ -42,7 +42,8 @@ dev/build/kirivers_build/images.py
                                                    # uses login-action@v3 + build-push-action@v6 and a
                                                    # `docker-manifest` JOB
 dev/build/kirivers_build/guards.py
-  commitlint                                       # COMMITLINT_TITLE / _FROM / _TO
+  commitlint [--self-check]                         # COMMITLINT_TITLE / _FROM / _TO
+                                                   # exit 0 pass | 1 verdict fail | 2 tooling fault
   issue-link [--record f] [pr] [--self-check]      # ok|fail|skip|error
   guard --record f [--title-ok 1|0|error] [--issue-ok 1|0|error] [--out f] [--self-check]
 dev/build/kirivers_build/selfcheck.py
@@ -111,7 +112,7 @@ Assets are the 10 archives above plus `frontend-dist.zip` (contents of `frontend
 - Cache **download inputs, never build outputs**. In use: `setup-go`'s default (keyed on `go.sum` + Go version + OS/arch), `setup-node` with `cache: yarn` + `cache-dependency-path: frontend/yarn.lock`, and `actions/cache` for `LLVM_MINGW_PREFIX`. `GOCACHE` content addressing is Go's own, so a restored build cache can only hit on genuinely identical inputs — a dependency or compiler change cannot reuse a stale artifact.
 - The llvm-mingw key is `llvm-mingw-${{ hashFiles('dev/build/kirivers_build/build.py') }}-<os>-<arch>`: the pinned `LLVM_MINGW_VERSION` lives in that file, so hashing it *is* versioning the key without repeating the number in YAML. Bias is deliberately toward over-invalidation. No prefix-restore fallback — `check-workflows` refutes any `restore-keys:` key in `release.yml`.
 - `LLVM_MINGW_PREFIX` is set at the **job** level so the cache step's `with:` and the CLI resolve the same directory; a step-level `env:` is not visible to that same step's `with:` and would silently miss forever.
-- Not cached, on purpose: apt cross toolchains (system package state), the musl container's module downloads, docker layers (the CI image build only copies a prebuilt binary), and anything at all in `pr-guard.yml` — caching `npx` there would pin whatever `@commitlint` was stored first instead of the declared version. Cache quota is **per repository** (10 GB, 7-day LRU eviction), shared with the `sdk/*` branch workflows.
+- Not cached in `actions/cache`, on purpose: apt cross toolchains (system package state), the musl container's module downloads, docker layers (the CI image build only copies a prebuilt binary), and anything at all in `pr-guard.yml`. Commitlint is instead installed by the CLI into a **version-keyed** directory (`<os-cache>/kirivers/commitlint-<version>`), which answers the objection that a cache would pin whatever `@commitlint` was stored first: bumping `COMMITLINT_VERSION` opens a new directory and the old one is simply abandoned. `commitlint --self-check` asserts that keying. Cache quota is **per repository** (10 GB, 7-day LRU eviction), shared with the `sdk/*` branch workflows.
 
 **Version (D8/D9)**
 
@@ -130,6 +131,24 @@ Assets are the 10 archives above plus `frontend-dist.zip` (contents of `frontend
 - Concurrency group `server-release`. The annotated tag is created **after** the assets exist, by `softprops/action-gh-release@v2` (it replaces the hand-written `gh release create`), which uploads the 11 archives + `SHA256SUMS.txt` and takes its body from the generated notes.
 - After tag + Release, the same job splices the release notes into root `CHANGELOG.md` and `git push origin HEAD:main` as `docs(release): v<semver> changelog`. That commit is made after the tag, so it is not part of the released range, and `docs:` never bumps the next version. If branch protection does not let `github-actions[bot]` write `main`, the step **fails loudly**; do not downgrade it to a skip.
 - `pr-guard.yml` uses `pull_request_target` because commenting on and closing a fork PR needs a write token. It checks out `ref: main` only, never `refs/pull/*`, never `head.sha`/`head.ref`, and runs no build or test step: it reads PR metadata through the API and feeds only that to `commitlint` (stdin), `issue-link` and `guard`. Keep it that way; `check-workflows` asserts it.
+- **The commit gate never judges on an empty stomach.** `kirivers.py commitlint` installs the
+  pinned `@commitlint` pair itself (`npm install --prefix <os-cache>/kirivers/commitlint-<version>
+  --no-save --no-package-lock`) and hands `--config` a generated file that
+  `require`s the tracked `commitlint.config.cjs`, because `@commitlint/load` resolves a bare
+  `extends` name from `dirname(--config)` upward and then only from the **global** npm prefix.
+  `npx --package` could never satisfy that: it installs under `~/.npm/_npx/<hash>/node_modules`,
+  so on a clean runner the ruleset raised `MODULE_NOT_FOUND` and exited 1 — the same code a real
+  rule violation returns, which is how a healthy PR used to get closed. So: `--print-config` is the
+  health probe (it runs the whole config load and never judges a commit), a failed probe or install
+  exits **2**, and `pr-guard.yml`'s `case` maps 2 to `ok=error` and skips the verdict. Exit 1 always
+  means commitlint itself reached a verdict. No `package.json`, lockfile or `node_modules` may appear
+  at the repository root for this; the install goes into a temp directory and is published by rename,
+  so a concurrent run can never see a half-written tree. That tree carries no
+  `preinstall`/`install`/`postinstall` script (only `prepare`, which npm does not run for a registry
+  tarball), and `npx` downloaded and ran the same pinned trees before, so this adds no new trust
+  boundary — but it does put
+  `registry.npmjs.org` on the gate's hot path, which is exactly why the fault must be loud (2) and
+  never a verdict.
 
 **CI security gate (two halves, physically split)**
 
@@ -195,7 +214,9 @@ Missing Hub creds fail the image step naming those vars. Logs must not print tok
 | `feat:` since last `v*` | minor bump; tag + Release + CHANGELOG + images |
 | `feat!:` or `BREAKING CHANGE:` on `0.1.x` | `1.0.0` |
 | `SERVER_PUBLISH=false` | version derived, `publish=no`, every downstream job skipped |
-| Squash PR title not Conventional Commits | `commitlint` fails the PR; `pr-guard.yml` comments and closes it for non-members |
+| Squash PR title not Conventional Commits | `commitlint` fails the PR (exit 1); `pr-guard.yml` comments and closes it for non-members |
+| commitlint cannot install, or its ruleset cannot load | exit **2**, never 1: `pr-guard.yml` records `ok=error` and skips the verdict instead of closing the PR, and `ci.yml` shows the npm failure |
+| commitlint's tool directory is mid-install for another run | that run sees nothing or a complete tree (rename publish); a torn tree fails the `--print-config` probe and is discarded, not cached |
 | Push event with `before` all zeros or unreachable | `commitlint` degrades to the tip commit and says so |
 | PR into `main` with no linked issue | `issue-link` exits 1 printing the fix; `sdk/*` PRs and direct pushes are not gated |
 | `CGO_ENABLED=0` official build | `build-cgo` / `go build .` fail |
@@ -222,9 +243,9 @@ Missing Hub creds fail the image step naming those vars. Logs must not print tok
 
 ### 6. Tests Required
 
-- `python3 dev/build/kirivers.py check-workflows` — asserts the dispatch-only trigger, no `tags:`, no QEMU step, ten targets, `frontend-dist.zip`, CHANGELOG + docker jobs, CI publishing nothing, the guard's security invariants, that `dev/build/` holds no shell or compose file, that the workflows call real subcommands (and that the windows job uses `python`, not `python3`), and (when the refs exist) every `sdk/*` workflow's merged-PR trigger plus the absence of `.gitlab-ci.yml`.
+- `python3 dev/build/kirivers.py check-workflows` — asserts the dispatch-only trigger, no `tags:`, no QEMU step, ten targets, `frontend-dist.zip`, CHANGELOG + docker jobs, CI publishing nothing, the guard's security invariants, that `dev/build/` holds no shell or compose file, that the workflows call real subcommands (and that the windows job uses `python`, not `python3`), that every expression in a workflow file (braced or bare `if:`) calls only a name in `ACTIONS_FUNCTIONS` — a made-up function is a whole-file parse failure, not a bad value — and (when the refs exist) every `sdk/*` workflow's merged-PR trigger plus the absence of `.gitlab-ci.yml`.
 - `python3 dev/build/kirivers.py release-notes --self-check` — §5.1 format, lowercase scope, PR tail, hidden-type behaviour, section order, determinism, embedded-default parity, and the byte-identical `next-version` assertion.
-- `python3 dev/build/kirivers.py guard --self-check` and `python3 dev/build/kirivers.py issue-link --self-check`.
+- `python3 dev/build/kirivers.py guard --self-check`, `python3 dev/build/kirivers.py issue-link --self-check` and `python3 dev/build/kirivers.py commitlint --self-check` (all three also run inside `check-workflows`; the commitlint suite is offline — tool-directory keying, the generated config's delegation, and an unwritable config reporting a fault instead of raising).
 - `python3 dev/build/kirivers.py next-version --format env` with no `v*` → `0.1.0`.
 - `python3 dev/build/kirivers.py asset-names` equals the install-page prefixes (compare after replacing `<sha6>` with `*`).
 - `CGO_ENABLED=0 go build .` fails (hdiffc); `CGO_ENABLED=1 go build .` succeeds.

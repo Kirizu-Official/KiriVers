@@ -18,7 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import common
+from . import build, common
 from .cli import COMMANDS
 
 REL = ".github/workflows/release.yml"
@@ -27,6 +27,7 @@ GUARD = ".github/workflows/pr-guard.yml"
 SEC = ".github/workflows/security-gate.yml"
 SCAN = ".github/workflows/gosec-scan.yml"
 SDKAM = ".github/workflows/sdk-automerge.yml"
+BUILD = "dev/build/kirivers_build/build.py"
 
 # Oldest interpreter the CLI must run on: macOS runners ship a python3 3.9.x that
 # `brew install` cannot override, so 3.10+ syntax has to be rejected statically.
@@ -124,6 +125,151 @@ def _check_publish_is_manual(checker: Checker) -> None:
         checker.fail(f"{REL}: not tied to pull requests")
     else:
         checker.ok(f"{REL}: not tied to pull requests")
+
+
+# The names the Actions expression evaluator accepts. This is a deliberate union,
+# not a transcription of one doc page: the reference table lists `contains`,
+# `startsWith`, `endsWith`, `format`, `join`, `toJSON`, `fromJSON`, `hashFiles`,
+# `case` and the four job status functions, while `toBool`, `toInt`, `toDouble`,
+# `toString`, `hashCode`, `equals`, `min` and `max` are accepted by the evaluator
+# without appearing in that table. The question this gate asks is "will GitHub
+# parse the file at all", so the wider set is the right one: an unsupported name is
+# not a runtime error, GitHub rejects the entire file and no job in it can start --
+# which is exactly how `substring(github.sha, 0, 7)` made release.yml unrunnable
+# while every other assertion stayed green. If one of the undocumented names is ever
+# refused in practice, delete it here: the failure mode is a local FAIL naming the
+# file and line, not a broken release. Names are case-insensitive in Actions, so
+# this set is lowercase and lookups fold.
+ACTIONS_FUNCTIONS = frozenset(
+    {
+        "contains",
+        "startswith",
+        "endswith",
+        "format",
+        "join",
+        "tojson",
+        "fromjson",
+        "case",
+        "hashfiles",
+        "tobool",
+        "toint",
+        "todouble",
+        "tostring",
+        "hashcode",
+        "equals",
+        "min",
+        "max",
+        "always",
+        "success",
+        "failure",
+        "cancelled",
+    }
+)
+_EXPRESSION_RE = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
+_CALL_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(")
+_STRING_RE = re.compile(r"'[^']*'")
+# An `if:` key is an expression without anybody writing ${{ }} -- GitHub evaluates
+# `if: startsWith(github.base_ref, 'sdk/')` and the multi-line `if: |` block the
+# same way it evaluates a braced one, so an unsupported function hidden there
+# breaks the file exactly as `substring()` did. A shell `if` inside a run block is
+# `if …; then`, never `if:`, so this cannot read script text as an expression.
+_IF_RE = re.compile(r"[ \t]*(?:-[ \t]+)?if:[ \t]*(.*)$")
+_BLOCK_SCALAR_RE = re.compile(r"[>|][-+0-9]*[ \t]*(?:#.*)?$")
+
+
+def _expression_payloads(text: str) -> list[tuple[str, int]]:
+    """Every expression payload in one workflow file, with its starting line.
+
+    Two shapes: an explicit ``${{ … }}`` anywhere in the file, and the value of an
+    ``if:`` key (inline or block scalar). Quoted spans are stripped by the caller,
+    because a string literal is data -- ``fromJSON('[\"OWNER\"]')`` must not be read
+    as a call to a function named ``OWNER``.
+    """
+    found = [
+        (match.group(1), text.count("\n", 0, match.start()) + 1)
+        for match in _EXPRESSION_RE.finditer(text)
+    ]
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        key = _IF_RE.match(line)
+        if key is None:
+            continue
+        rest = key.group(1).strip()
+        if _BLOCK_SCALAR_RE.match(rest):
+            indent = len(line) - len(line.lstrip())
+            body: list[str] = []
+            for follow in lines[index + 1 :]:
+                if follow.strip() and len(follow) - len(follow.lstrip()) <= indent:
+                    break
+                body.append(follow.strip())
+            found.append((" ".join(body), index + 1))
+        elif rest and not rest.startswith("#"):
+            found.append((rest, index + 1))
+    return found
+
+
+def _check_workflow_expressions(checker: Checker) -> None:
+    # --- every expression must use functions GitHub actually provides ---------
+    checked = 0
+    rejected = 0
+    # .yaml is a supported extension too; skipping it would leave a whole workflow
+    # file unparsed by the one gate whose job is to catch an unparsable file.
+    workflows = sorted(
+        path
+        for pattern in (".github/workflows/*.yml", ".github/workflows/*.yaml")
+        for path in common.ROOT.glob(pattern)
+    )
+    for path in workflows:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        checked += 1
+        for payload, line in _expression_payloads(text):
+            # Quoted text is data, not code: `format('{0}', …)` must not be read as
+            # a call to a function named `{0}`.
+            stripped = _STRING_RE.sub("", payload)
+            for call in _CALL_RE.finditer(stripped):
+                name = call.group(1)
+                if name.lower() in ACTIONS_FUNCTIONS:
+                    continue
+                rejected += 1
+                checker.fail(
+                    f"{path.relative_to(common.ROOT).as_posix()}:{line}: "
+                    f"unrecognized function '{name}' inside the expression "
+                    f"{payload.strip()[:60]!r}; GitHub refuses to parse the whole workflow file"
+                )
+    # Not a summary line about how many files were clean: the pass claim has to
+    # disappear with the failures, or the log reads "6 files are fine" three lines
+    # below the file it just refused.
+    if checked and not rejected:
+        checker.ok(f"{checked} workflow files use only supported expression functions")
+
+
+def _check_build_info_stamp(checker: Checker) -> None:
+    # --- one place decides the commit width, and it is not the workflow -------
+    checker.assert_grep(
+        REL,
+        r"KIRIVERS_BUILD_COMMIT: \$\{\{ github\.sha \}\}",
+        "injects the full SHA (there is no string-slicing function in an expression)",
+    )
+    checker.assert_grep(
+        REL, r"KIRIVERS_BUILD_TIME: \$\{\{ github\.run_started_at \}\}", "one build time per run"
+    )
+    checker.assert_grep(BUILD, r"^_COMMIT_SHORT_LEN = 7", "the CLI owns the 7-character width")
+    checker.assert_grep(BUILD, r"value = _short_commit\(value\)", "the injected SHA is trimmed")
+    checker.assert_grep(
+        BUILD,
+        r"env\[.KIRIVERS_BUILD_COMMIT.\] = _short_commit",
+        "the frontend build is trimmed to the same width",
+    )
+    # Behaviour, not spelling: internal/buildinfo truncates a VCS stamp to 7, so an
+    # injected 40-char SHA and a local `git rev-parse --short` must agree.
+    for raw, expected in (("a" * 40, "a" * 7), ("abcdef1", "abcdef1"), ("", "")):
+        got = build._short_commit(raw)
+        if got != expected:
+            checker.fail(f"_short_commit({len(raw)} chars) returned {got!r}, expected {expected!r}")
+    if build._COMMIT_SHORT_LEN != 7:
+        checker.fail("_COMMIT_SHORT_LEN must stay 7 to match internal/buildinfo")
+    else:
+        checker.ok("_short_commit trims to internal/buildinfo's 7-character width")
 
 
 def _check_no_emulation(checker: Checker) -> None:
@@ -376,6 +522,9 @@ def _check_offline_suites(checker: Checker) -> None:
         ("guard --self-check", ["guard", "--self-check"]),
         ("issue-link --self-check", ["issue-link", "--self-check"]),
         ("release-notes --self-check", ["release-notes", "--self-check"]),
+        # The commit gate's own suite must stay offline: it asserts the tool
+        # directory layout and the fault exit code without ever running npm.
+        ("commitlint --self-check", ["commitlint", "--self-check"]),
     ):
         # encoding is not optional: the suites print Chinese and emoji on stderr,
         # and text=True alone decodes them with the host locale (cp936 on a Windows
@@ -483,6 +632,8 @@ def check_workflows(argv: list[str]) -> int:
     checker = Checker()
     for step in (
         _check_publish_is_manual,
+        _check_workflow_expressions,
+        _check_build_info_stamp,
         _check_no_emulation,
         _check_matrix_and_wiring,
         _check_asset_name_contract,

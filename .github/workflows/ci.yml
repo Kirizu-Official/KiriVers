@@ -219,6 +219,8 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test ./internal/delta/...
+      - name: Ensure go:embed placeholder
+        run: mkdir -p frontend/dist && touch frontend/dist/.gitkeep
       - name: Unit tests
         env:
           CGO_ENABLED: "1"
