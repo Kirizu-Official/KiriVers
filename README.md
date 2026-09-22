@@ -4,14 +4,14 @@
 
 <h1 align="center">KiriVers</h1>
 
-<p align="center">自托管软件更新服务</p>
+<p align="center">自托管软件更新服务</p> 
 
 <p align="center">
 Language: <b>中文</b> · <a href="README.EN.md">English</a>
 </p>
 
 <p align="center">
-  文档：<a href="https://kirivers.kirizu.dev">https://kirivers.kirizu.dev</a>
+  文档：<a href="https://kirivers.kirizu.dev">https://kirivers.kirizu.dev</a>  | QQ群: <a href="https://qm.qq.com/q/jlwrQ9zSEw">574240693</a>
 </p>
 
 KiriVers 让你 **自己托管软件更新**：把安装包、固件或文件列表发布到本服务，设备上的应用来检查并下载。它不是 git，也不能替代 App Store、Google Play 或 Microsoft Store，也不是 APT / RPM / Flatpak 软件源。
