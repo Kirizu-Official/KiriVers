@@ -2,11 +2,17 @@
 //
 // 生成对齐无参数 `hdiffz old new diff`：create_compressed_diff(compressPlugin=NULL)，
 // magic 为 HDIFF13&。压缩差量不支持（不链接 zlib/zstd）。空 old/new 用非 NULL 占位。
+//
+// CGO 标志刻意不声明 -I 包含根：Windows/macOS 按大小写不敏感匹配搜索路径，
+// third_party/hdiffpatch 里的 VERSION（钉的上游 tag v4.12.2）会顶掉 libc++ 的
+// <version>，让每个 .cpp 编译单元炸在 "unknown type name 'v4'"，而区分大小写的
+// Linux + libstdc++ 侥幸通过。vendored 源码一律相对自身目录包含，见 wrap.cpp
+// 与 vendor_*.c/.cpp；check-workflows 会拒绝任何含无扩展名文件的包含根。
 package hdiffc
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../../../third_party/hdiffpatch -D_IS_NEED_DIR_DIFF_PATCH=0 -D_IS_NEED_BSDIFF=0 -D_IS_NEED_VCDIFF=0 -D_IS_USED_MULTITHREAD=0 -D_IS_NEED_DEFAULT_CompressPlugin=0 -D_IS_NEED_ALL_CompressPlugin=0 -D_IS_NEED_DEFAULT_ChecksumPlugin=0 -D_IS_NEED_ALL_ChecksumPlugin=0 -D_IS_OUT_DIFF_INFO=0 -DNDEBUG
-#cgo CXXFLAGS: -std=c++11 -I${SRCDIR}/../../../third_party/hdiffpatch -D_IS_NEED_DIR_DIFF_PATCH=0 -D_IS_NEED_BSDIFF=0 -D_IS_NEED_VCDIFF=0 -D_IS_USED_MULTITHREAD=0 -D_IS_NEED_DEFAULT_CompressPlugin=0 -D_IS_NEED_ALL_CompressPlugin=0 -D_IS_NEED_DEFAULT_ChecksumPlugin=0 -D_IS_NEED_ALL_ChecksumPlugin=0 -D_IS_OUT_DIFF_INFO=0 -DNDEBUG
+#cgo CFLAGS: -D_IS_NEED_DIR_DIFF_PATCH=0 -D_IS_NEED_BSDIFF=0 -D_IS_NEED_VCDIFF=0 -D_IS_USED_MULTITHREAD=0 -D_IS_NEED_DEFAULT_CompressPlugin=0 -D_IS_NEED_ALL_CompressPlugin=0 -D_IS_NEED_DEFAULT_ChecksumPlugin=0 -D_IS_NEED_ALL_ChecksumPlugin=0 -D_IS_OUT_DIFF_INFO=0 -DNDEBUG
+#cgo CXXFLAGS: -std=c++11 -D_IS_NEED_DIR_DIFF_PATCH=0 -D_IS_NEED_BSDIFF=0 -D_IS_NEED_VCDIFF=0 -D_IS_USED_MULTITHREAD=0 -D_IS_NEED_DEFAULT_CompressPlugin=0 -D_IS_NEED_ALL_CompressPlugin=0 -D_IS_NEED_DEFAULT_ChecksumPlugin=0 -D_IS_NEED_ALL_ChecksumPlugin=0 -D_IS_OUT_DIFF_INFO=0 -DNDEBUG
 #cgo linux LDFLAGS: -lstdc++
 #cgo windows LDFLAGS: -lstdc++
 #cgo darwin LDFLAGS: -lc++

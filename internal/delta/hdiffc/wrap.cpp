@@ -1,8 +1,8 @@
 // wrap.cpp 捕获 C++ 异常并拷贝 std::vector 到 malloc 缓冲，避免向 Go 泄漏 C++ 对象。
 #include "wrap.h"
 
-#include "libHDiffPatch/HDiff/diff.h"
-#include "libHDiffPatch/HPatch/patch.h"
+#include "../../../third_party/hdiffpatch/libHDiffPatch/HDiff/diff.h"
+#include "../../../third_party/hdiffpatch/libHDiffPatch/HPatch/patch.h"
 
 #include <cstdlib>
 #include <cstring>

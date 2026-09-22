@@ -418,6 +418,57 @@ def _check_layout_invariants(checker: Checker) -> None:
     checker.assert_file("dev/docker/compose.yml")
 
 
+def _check_cgo_include_roots(checker: Checker) -> None:
+    # --- no include root may hold a dot-less file ------------------------------
+    # A `-I` directory is searched case-insensitively on Windows and macOS, so a file
+    # named like a standard header answers `#include <version>` before the toolchain
+    # does: `third_party/hdiffpatch/VERSION` (the pinned upstream tag) broke every
+    # libc++ CGO build there while Linux passed on a case-sensitive fs with
+    # libstdc++. Standard header names never carry a dot, so a dot-less file in an
+    # include root is a whole-matrix hazard — the vendored tree is include-relative.
+    roots = {}
+    proc = subprocess.run(
+        ["git", "ls-files", "-z", "*.go"],
+        cwd=common.ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    for rel in sorted(filter(None, proc.stdout.split("\0"))):
+        text = (common.ROOT / rel).read_text(encoding="utf-8", errors="replace")
+        for line in text.splitlines():
+            if not line.lstrip().startswith("#cgo") or "FLAGS" not in line:
+                continue
+            for raw in re.findall(r"-I(\S+)", line):
+                expanded = raw.replace("${SRCDIR}", str(common.ROOT / rel / ".."))
+                roots.setdefault(Path(expanded).resolve().as_posix(), rel)
+
+    hazards = []
+    base = common.ROOT.resolve().as_posix()
+    for root, declared_by in sorted(roots.items()):
+        directory = Path(root)
+        if not directory.is_dir():
+            continue
+        shown = root[len(base) + 1 :] if root.lower().startswith(f"{base.lower()}/") else root
+        hazards += [
+            f"{shown}/{entry.name} (-I in {declared_by})"
+            for entry in sorted(directory.iterdir())
+            # C headers all end in .h, so only the dot-less C++ standard names can be
+            # shadowed. The legal-attribution names a vendored tree must ship are
+            # dot-less too but are not header names, so they are excused by spelling.
+            if entry.is_file()
+            and "." not in entry.name
+            and entry.name.upper() not in {"LICENSE", "COPYING", "NOTICE"}
+        ]
+    if hazards:
+        for hazard in hazards:
+            checker.fail(f"cgo include root can shadow a standard header: {hazard}")
+    elif roots:
+        checker.ok(f"{len(roots)} cgo include root(s) hold no dot-less file")
+    else:
+        checker.ok("no #cgo -I include root anywhere (vendored headers resolve relatively)")
+
+
 def _check_retired_forge(checker: Checker) -> None:
     # --- retired GitLab path -------------------------------------------------
     for path in (
@@ -681,6 +732,7 @@ def check_workflows(argv: list[str]) -> int:
         _check_matrix_and_wiring,
         _check_asset_name_contract,
         _check_layout_invariants,
+        _check_cgo_include_roots,
         _check_retired_forge,
         _check_ci_does_not_publish,
         _check_guard_invariants,
