@@ -593,20 +593,68 @@ def _git_show(revision: str, path: str) -> str | None:
 
 
 def _check_sdk_branches(checker: Checker) -> None:
-    # --- sdk/* branches (only when their refs are present) -------------------
-    proc = subprocess.run(
-        ["git", "for-each-ref", "--format=%(refname)", "refs/heads/sdk/*"],
-        cwd=common.ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
+    # --- sdk/* branches -------------------------------------------------------
+    # Remote-tracking refs are the ones a CI checkout has: `actions/checkout` fills
+    # refs/remotes/origin, never refs/heads, so scanning only refs/heads (as this
+    # function did) made every assertion below a no-op in CI and let a branch ship
+    # with a workflow that cannot trigger. Local refs are listed first so a
+    # maintainer validates their own in-progress branch rather than the pushed one.
+    refs: dict[str, str] = {}
+    for pattern in ("refs/heads/sdk/*", "refs/remotes/origin/sdk/*"):
+        proc = subprocess.run(
+            ["git", "for-each-ref", "--format=%(refname)", pattern],
+            cwd=common.ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        for line in proc.stdout.splitlines():
+            ref = line.strip()
+            if not ref or ref.endswith("/HEAD"):
+                continue
+            branch = ref.split("refs/heads/")[-1].split("refs/remotes/origin/")[-1]
+            refs.setdefault(branch, ref)
+
+    # Nothing in main's ci.yml can gate a pull request whose base is an sdk branch:
+    # GitHub resolves the workflow from the base branch, so a trigger, a path filter
+    # or a job here for those branches is decoration that never runs -- and worse,
+    # reads as coverage to whoever glances at the workflow list.
+    checker.refute_grep(
+        CI, r"branches:[^\n]*sdk/", "main's ci.yml triggers on no sdk branch (it could not run there)"
     )
-    refs = [line for line in proc.stdout.splitlines() if line.strip()]
-    seen = 0
-    for ref in refs:
-        branch = ref[len("refs/heads/") :]
-        seen += 1
+    checker.refute_grep(CI, r"^[ \t]*sdk-ci:", "main's ci.yml holds no placeholder SDK job")
+    checker.refute_grep(CI, r"^[ \t]+sdk:", "main's path-filter reports no sdk paths (main has no sdk/ dir)")
+
+    packages = pointers = 0
+    for branch, ref in sorted(refs.items()):
+        pipeline = _git_show(ref, ".github/workflows/ci.yml")
         release = _git_show(ref, ".github/workflows/release.yml")
+        if _git_show(ref, ".gitlab-ci.yml") is not None:
+            checker.fail(f"{branch} still has .gitlab-ci.yml")
+        if _git_show(ref, "scripts/sdk_release.py") is None:
+            # A README-only pointer branch (go, php, swift): the package root lives
+            # in the published repo, so a workflow here would gate nothing but itself.
+            pointers += 1
+            if pipeline is not None or release is not None:
+                checker.fail(f"{branch} is a pointer branch and must carry no workflow")
+            continue
+        packages += 1
+        # This file, not main's, is the only gate a pull request into this branch
+        # can get -- and it only fires if it names the branch it lives on.
+        if pipeline is None:
+            checker.fail(f"{branch} has no ci.yml: its pull requests would merge unchecked")
+        else:
+            if "pull_request:" not in pipeline:
+                checker.fail(f"{branch} ci.yml must trigger on pull_request")
+            if f"branches: [{branch}]" not in pipeline:
+                checker.fail(
+                    f"{branch} ci.yml must name its own branch in branches: "
+                    "(GitHub reads a pull request's workflows from its base branch)"
+                )
+            if "commitlint" not in pipeline:
+                checker.fail(f"{branch} ci.yml must lint the pull request title")
+            if "issue-link" in pipeline:
+                checker.fail(f"{branch} ci.yml must not carry the main-only issue gate")
         if release is not None:
             if "types: [closed]" not in release:
                 checker.fail(f"{branch} release.yml must trigger on pull_request closed")
@@ -616,15 +664,10 @@ def _check_sdk_branches(checker: Checker) -> None:
                 checker.fail(f"{branch} release.yml must not trigger on push")
             if "gitlab" in release.lower():
                 checker.fail(f"{branch} release.yml still mentions GitLab")
-        pipeline = _git_show(ref, ".github/workflows/ci.yml")
-        if pipeline is not None and "issue-link" in pipeline:
-            checker.fail(f"{branch} ci.yml must not carry the main-only issue gate")
-        if _git_show(ref, ".gitlab-ci.yml") is not None:
-            checker.fail(f"{branch} still has .gitlab-ci.yml")
-    if seen == 0:
+    if not refs:
         checker.note("note sdk/* branch assertions skipped (no sdk/* refs in this clone)")
     else:
-        checker.ok(f"checked {seen} sdk/* branch workflows")
+        checker.ok(f"checked {packages} sdk/* package branches, {pointers} pointer branches")
 
 
 def check_workflows(argv: list[str]) -> int:

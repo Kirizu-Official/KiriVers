@@ -26,8 +26,10 @@ jobs:
   guard:
     name: Check title and linked issue
     runs-on: ubuntu-latest
-    # Pull requests based on sdk/* are out of scope: their release pipelines own
-    # the version bump and a bot closure there would block a publish.
+    # An sdk/<lang> base is out of scope: GitHub reads a pull request's workflows
+    # from that base branch, whose own ci.yml already lints the title, and a bot
+    # closure here would block a publish. The condition still earns its keep on a
+    # pull request into a feature branch cut from main, where this file does resolve.
     if: github.event.pull_request.base.ref == 'main'
     steps:
       - name: Check out the base branch only

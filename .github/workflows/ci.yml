@@ -1,8 +1,12 @@
 name: CI
 
+# This file can only gate main. GitHub resolves a workflow from the base branch of
+# a pull request and from the branch a push lands on, so nothing here can run for a
+# pull request into sdk/<lang>; those orphan branches carry their own ci.yml, and
+# check-workflows asserts each of them still triggers on its own branch name.
 on:
   pull_request:
-    branches: [main, 'sdk/**']
+    branches: [main]
   push:
     branches: [main]
 
@@ -62,7 +66,8 @@ jobs:
         run: python3 dev/build/kirivers.py commitlint
 
   # Every pull request into main must be tied to an issue. Direct pushes to main
-  # and pull requests based on sdk/* are deliberately not gated (design.md §6).
+  # are deliberately not gated (design.md §6), and a pull request into an sdk/<lang>
+  # branch is gated by that branch's own workflow, never by this one.
   issue-link:
     name: Linked issue
     needs: pre-flight
@@ -89,7 +94,6 @@ jobs:
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
       go: ${{ steps.filter.outputs.go }}
-      sdk: ${{ steps.filter.outputs.sdk }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -103,8 +107,6 @@ jobs:
               - 'go.mod'
               - 'go.sum'
               - 'third_party/hdiffpatch/**'
-            sdk:
-              - 'sdk/**'
 
   # Base pipeline: Frontend build is always verified first
   frontend:
@@ -222,25 +224,6 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test ./...
-  # Target branch is sdk/*: Run SDK build & test
-  sdk-ci:
-    name: SDK Test Suite
-    needs: path-filter
-    if: startsWith(github.base_ref, 'sdk/')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Egress hardening
-        uses: step-security/harden-runner@v2
-        with:
-          egress-policy: audit
-
-      - uses: actions/checkout@v4
-      - name: Run SDK Suite
-        # The branch name travels through the environment, never inlined into
-        # the shell command (design.md §3.2).
-        env:
-          SDK_BASE_REF: ${{ github.base_ref }}
-        run: echo "Executing test suite for SDK branch $SDK_BASE_REF"
 
   changelog:
     name: Changelog contract
