@@ -89,7 +89,6 @@ jobs:
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
       go: ${{ steps.filter.outputs.go }}
-      website: ${{ steps.filter.outputs.website }}
       sdk: ${{ steps.filter.outputs.sdk }}
     steps:
       - uses: actions/checkout@v4
@@ -104,8 +103,6 @@ jobs:
               - 'go.mod'
               - 'go.sum'
               - 'third_party/hdiffpatch/**'
-            website:
-              - 'website/**'
             sdk:
               - 'sdk/**'
 
@@ -225,30 +222,6 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test ./...
-
-  # Path-filtered: Build VitePress docs when website/** changes
-  website-build:
-    name: VitePress Docs Build
-    needs: [path-filter, go-build]
-    if: needs.path-filter.outputs.website == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Egress hardening
-        uses: step-security/harden-runner@v2
-        with:
-          egress-policy: audit
-
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - name: Build Docs
-        run: |
-          set -eu
-          cd website
-          yarn install --frozen-lockfile
-          yarn docs:build
-
   # Target branch is sdk/*: Run SDK build & test
   sdk-ci:
     name: SDK Test Suite

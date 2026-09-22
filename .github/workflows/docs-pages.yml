@@ -1,0 +1,113 @@
+name: Docs Pages
+
+# VitePress 官方文档站：website/** 的改动一律编译，产物 website/.vitepress/dist 发布到 gh-pages 分支。
+# Official VitePress docs site: every change under website/** is compiled, and the build output
+# (website/.vitepress/dist) is published to the gh-pages branch.
+#
+# Triggers / 触发方式:
+#   pull_request into main  - compiles the docs for the PR's website/** changes and tries to
+#                             publish. That attempt is what makes a same-repository PR go live
+#                             while a fork PR - whose token GitHub always caps at read-only -
+#                             degrades to a loud warning instead of a red check.
+#   push to main            - compiles and publishes the merged docs.
+#   workflow_dispatch       - the manual path; publishes when it runs on main, and from any
+#                             other ref it only verifies the build.
+#
+# GitHub Pages must be set to "Deploy from a branch: gh-pages / (root)"; with the "GitHub
+# Actions" source selected this push updates the branch but serves nothing.
+# Site base stays "/" (custom domain), so nothing passes --base to `vitepress build`.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/docs-pages.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/docs-pages.yml'
+  workflow_dispatch:
+
+# contents:write is the whole publish right: gh-pages moves by git push, not by an API call
+# that would need more. A pull request from a fork receives a read-only token regardless.
+permissions:
+  contents: write
+
+# cancel-in-progress only for pull requests: a run that is already rewriting gh-pages must not
+# be cancelled underneath itself.
+concurrency:
+  group: docs-pages-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  docs-pages:
+    name: Build docs and publish gh-pages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Egress hardening
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: yarn
+          cache-dependency-path: website/yarn.lock
+      - name: Compile the VitePress site
+        run: |
+          set -eu
+          cd website
+          yarn install --frozen-lockfile
+          yarn docs:build
+      - name: Require the built site
+        run: test -f website/.vitepress/dist/index.html
+
+      - name: Publish dist to gh-pages
+        env:
+          # Single source for the branch name below; the step name above is display-only.
+          PAGES_BRANCH: gh-pages
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          BUILD_SHA: ${{ github.sha }}
+          # The event and the ref travel through the environment, never inlined into the shell
+          # command (design.md §3.2).
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          set -eu
+          if [ "$EVENT" = workflow_dispatch ] && [ "$REF" != "refs/heads/main" ]; then
+            echo "Manual run on $REF: verifying the build only, $PAGES_BRANCH untouched."
+            exit 0
+          fi
+
+          # The branch is generated, so every run rebuilds it from scratch and force-pushes:
+          # $PAGES_BRANCH then holds one commit, never accumulated history, and never a page
+          # that was deleted from website/** but survived an incremental copy.
+          stage=$(mktemp -d)
+          cp -a website/.vitepress/dist/. "$stage/"
+          # Without this file Pages renders the tree through Jekyll, which drops dotfiles and
+          # rewrites anything it treats as a source file.
+          : >"$stage/.nojekyll"
+          git -C "$stage" init -q
+          git -C "$stage" config user.name 'github-actions[bot]'
+          git -C "$stage" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C "$stage" add -A
+          git -C "$stage" commit -qm "docs(website): publish $PAGES_BRANCH from ${BUILD_SHA:0:7}"
+
+          # A scratch repo does not inherit the credential actions/checkout wrote into the
+          # workspace, so hand it the same Authorization header rather than a token-bearing
+          # remote URL that a git error could echo into the log.
+          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          if git -C "$stage" -c "http.https://github.com/.extraheader=$auth" \
+            push --force "https://github.com/$GITHUB_REPOSITORY.git" "HEAD:refs/heads/$PAGES_BRANCH"; then
+            echo "Published website/.vitepress/dist to $PAGES_BRANCH."
+          elif [ "$EVENT" = pull_request ]; then
+            # GitHub hands a pull_request run from a fork a read-only token and no way to ask
+            # beforehand, so the refusal is answered here: build verified, nothing published.
+            echo "::warning::$PAGES_BRANCH push refused: this pull request run holds a read-only token, so only the docs build was verified."
+          else
+            exit 1
+          fi

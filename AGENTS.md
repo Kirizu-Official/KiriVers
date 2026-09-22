@@ -43,7 +43,7 @@ KiriVers 是一个版本控制系统，主要用于管理二进制软件项目�
 ├── scripts/install-deps.sh         # Linux 装 PostgreSQL（可选 Redis）；不下载 KiriVers 二进制
 ├── deploy/                         # 使用者一键 Compose（官方镜像 + Postgres + Redis；口令只写 .env）；仓库唯一跑 KiriVers 进程的 Compose 示例
 ├── dev/build/                      # Alpine 运行镜像 Dockerfile 与发版 CLI（kirivers.py + kirivers_build/，纯标准库 Python 子命令；GitHub Actions 只做编排，判定都在 CLI 里）；不放 Compose，也没有 sh 脚本
-├── .github/workflows/              # ci.yml（PR 与 main 的检查）、pr-guard.yml、gosec-scan.yml + security-gate.yml（wait-merge 沙箱扫描与 ready-merge 状态机）、release.yml（只手动 workflow_dispatch；合入 main 绝不发布）、sdk-automerge.yml（只手动；批量合并 sdk/* PR 并推 registry）
+├── .github/workflows/              # ci.yml（PR 与 main 的检查）、pr-guard.yml、gosec-scan.yml + security-gate.yml（wait-merge 沙箱扫描与 ready-merge 状态机）、docs-pages.yml（website/ 编译并发布 gh-pages）、release.yml（只手动 workflow_dispatch；合入 main 绝不发布）、sdk-automerge.yml（只手动；批量合并 sdk/* PR 并推 registry）
 ├── CHANGELOG.md                    # 发版作业写回的更新日志（首次发版后出现），贡献者不要手写
 ├── third_party/hdiffpatch/         # 钉版本裁剪的 libHDiffPatch（未压缩 HDIFF13；无 CLI/压缩插件）
 ├── configs/

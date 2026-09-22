@@ -47,7 +47,7 @@ dev/build/              # 运行镜像 Dockerfile 与发版 CLI（无 shell 脚�
     images.py           # docker-image（每架构原生构建并推 <semver>_amd64 / _arm64）与 docker-manifest
     guards.py           # commitlint / issue-link（进 main 的 PR 是否绑定 Issue）/ guard（守卫判定矩阵）
     selfcheck.py        # check-workflows：流水线静态门（触发方式、矩阵、零 QEMU）
-.github/workflows/      # ci.yml（PR 与 main push 的检查）、pr-guard.yml、gosec-scan.yml + security-gate.yml（Gosec 沙箱扫描与 ready-merge 状态机）、release.yml（只手动 workflow_dispatch）、sdk-automerge.yml（只手动；批量合并 sdk/* 并发版推 registry）
+.github/workflows/      # ci.yml（PR 与 main push 的检查）、pr-guard.yml、gosec-scan.yml + security-gate.yml（Gosec 沙箱扫描与 ready-merge 状态机）、docs-pages.yml（website/ 编译并发布 gh-pages）、release.yml（只手动 workflow_dispatch）、sdk-automerge.yml（只手动；批量合并 sdk/* 并发版推 registry）
 website/                # 官方文档站
 deploy/                 # 使用者一键 Compose（.env 统一口令 + 自带 YAML）
 scripts/install-deps.sh

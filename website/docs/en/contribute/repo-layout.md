@@ -47,7 +47,7 @@ dev/build/              # runtime Dockerfile and the release CLI (no shell scrip
     images.py           # docker-image (native per-arch build, pushes <semver>_amd64 / _arm64) and docker-manifest
     guards.py           # commitlint / issue-link (PRs into main must link an issue) / guard (decision matrix)
     selfcheck.py        # check-workflows: static gate on the workflows (triggers, matrix, no QEMU)
-.github/workflows/      # ci.yml (PR + main push checks), pr-guard.yml, gosec-scan.yml + security-gate.yml (sandboxed Gosec scan and ready-merge state machine), release.yml (manual workflow_dispatch only), sdk-automerge.yml (manual only; batch-merges sdk/* PRs, releases and pushes to registries)
+.github/workflows/      # ci.yml (PR + main push checks), pr-guard.yml, gosec-scan.yml + security-gate.yml (sandboxed Gosec scan and ready-merge state machine), docs-pages.yml (compiles website/** and publishes gh-pages), release.yml (manual workflow_dispatch only), sdk-automerge.yml (manual only; batch-merges sdk/* PRs, releases and pushes to registries)
 website/                # official docs site
 deploy/                 # operator one-click Compose (.env credentials + bundled YAML)
 scripts/install-deps.sh
